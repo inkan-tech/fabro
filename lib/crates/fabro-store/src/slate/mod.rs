@@ -21,7 +21,7 @@ use slatedb::config::{CompressionCodec, Settings};
 use tokio::sync::{Mutex, OnceCell};
 
 use crate::run_state::build_summary;
-use crate::{Error, ListRunsQuery, Result, keys};
+use crate::{Error, ListRunsQuery, Result, RunProjection, keys};
 
 #[derive(Clone)]
 pub struct Database {
@@ -188,6 +188,28 @@ impl Database {
         }
         summaries.sort_by_key(|b| std::cmp::Reverse(b.run_id.created_at()));
         Ok(summaries)
+    }
+
+    pub async fn list_runs_with_projection(
+        &self,
+        query: &ListRunsQuery,
+    ) -> Result<Vec<(RunSummary, RunProjection)>> {
+        let db = self.open_db().await?;
+        let run_ids = self.catalog_index().await?.list(query).await?;
+        let mut entries = Vec::new();
+        for run_id in run_ids {
+            if let Some(active) = self.get_active_run(&run_id).await {
+                let state = active.state().await?;
+                entries.push((build_summary(&state, &run_id), state));
+                continue;
+            }
+            if !RunDatabase::has_any_events(&db, &run_id).await? {
+                continue;
+            }
+            entries.push(RunDatabase::build_summary_with_projection(&db, &run_id).await?);
+        }
+        entries.sort_by_key(|(summary, _)| std::cmp::Reverse(summary.run_id.created_at()));
+        Ok(entries)
     }
 
     pub async fn delete_run(&self, run_id: &RunId) -> Result<()> {

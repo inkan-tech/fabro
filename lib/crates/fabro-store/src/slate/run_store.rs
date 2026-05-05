@@ -121,9 +121,21 @@ impl RunDatabase {
     where
         R: DbRead + Sync,
     {
+        let (summary, _) = Self::build_summary_with_projection(db, run_id).await?;
+        Ok(summary)
+    }
+
+    pub(crate) async fn build_summary_with_projection<R>(
+        db: &R,
+        run_id: &RunId,
+    ) -> Result<(RunSummary, RunProjection)>
+    where
+        R: DbRead + Sync,
+    {
         let events = list_events_from(db, run_id, 1).await?;
         let state = RunProjection::apply_events(&events)?;
-        Ok(build_summary(&state, run_id))
+        let summary = build_summary(&state, run_id);
+        Ok((summary, state))
     }
 
     async fn projected_state(&self) -> Result<RunProjection> {

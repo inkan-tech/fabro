@@ -125,19 +125,12 @@ pub(crate) fn board_columns() -> Vec<BoardColumnDefinition> {
     ]
 }
 
-async fn board_run_metadata(
-    state: &AppState,
-    run_id: RunId,
+fn board_run_metadata_from_projection(
+    projection: &fabro_store::RunProjection,
 ) -> serde_json::Map<String, serde_json::Value> {
     let mut metadata = serde_json::Map::new();
-    let Ok(run_store) = state.store.open_run_reader(&run_id).await else {
-        return metadata;
-    };
-    let Ok(run_state) = run_store.state().await else {
-        return metadata;
-    };
 
-    if let Some(pull_request) = run_state.pull_request {
+    if let Some(pull_request) = projection.pull_request.as_ref() {
         metadata.insert(
             "pull_request".to_string(),
             serde_json::json!({
@@ -146,13 +139,13 @@ async fn board_run_metadata(
         );
     }
 
-    if let Some(sandbox) = run_state.sandbox {
+    if let Some(sandbox) = projection.sandbox.as_ref() {
         let mut sandbox_metadata = serde_json::Map::new();
         sandbox_metadata.insert(
             "working_directory".to_string(),
-            serde_json::json!(sandbox.working_directory),
+            serde_json::json!(&sandbox.working_directory),
         );
-        if let Some(identifier) = sandbox.identifier {
+        if let Some(identifier) = sandbox.identifier.as_ref() {
             sandbox_metadata.insert("id".to_string(), serde_json::json!(identifier));
         }
         metadata.insert(
@@ -162,7 +155,7 @@ async fn board_run_metadata(
     }
 
     if let Some((_, record)) =
-        run_state
+        projection
             .pending_interviews
             .iter()
             .min_by(|(left_id, left), (right_id, right)| {
@@ -174,7 +167,7 @@ async fn board_run_metadata(
         metadata.insert(
             "question".to_string(),
             serde_json::json!({
-                "text": record.question.text,
+                "text": &record.question.text,
             }),
         );
     }
@@ -196,9 +189,9 @@ async fn list_board_runs(
     State(state): State<Arc<AppState>>,
     Query(pagination): Query<PaginationParams>,
 ) -> Response {
-    let summaries = match state
+    let entries = match state
         .store
-        .list_runs(&fabro_store::ListRunsQuery::default())
+        .list_runs_with_projection(&fabro_store::ListRunsQuery::default())
         .await
     {
         Ok(runs) => runs,
@@ -207,23 +200,22 @@ async fn list_board_runs(
                 .into_response();
         }
     };
-    let board_summaries: Vec<_> = summaries
+    let board_summaries: Vec<_> = entries
         .into_iter()
-        .filter_map(|summary| {
+        .filter_map(|(summary, projection)| {
             let column = board_column(summary.status)?;
-            Some((summary, column))
+            Some((summary, projection, column))
         })
         .collect();
     let (page_summaries, has_more) = paginate_items(board_summaries, &pagination);
 
     let mut data = Vec::with_capacity(page_summaries.len());
-    for (summary, column) in page_summaries {
-        let run_id = summary.run_id;
+    for (summary, projection, column) in page_summaries {
         let mut item =
             serde_json::to_value(&summary).expect("RunSummary serialization is infallible");
         item["column"] = serde_json::json!(column);
         if let Some(object) = item.as_object_mut() {
-            object.extend(board_run_metadata(state.as_ref(), run_id).await);
+            object.extend(board_run_metadata_from_projection(&projection));
         }
         data.push(item);
     }

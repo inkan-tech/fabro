@@ -68,6 +68,15 @@ pub enum Event {
     RunQueued,
     RunStarting,
     RunRunning,
+    RunInterrupt {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        actor: Option<Principal>,
+    },
+    RunSteer {
+        text:  String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        actor: Option<Principal>,
+    },
     RunBlocked {
         blocked_reason: BlockedReason,
     },
@@ -524,6 +533,59 @@ pub enum Event {
         model:    String,
         command:  String,
     },
+    /// A top-level agent session object started its lifecycle.
+    AgentSessionStarted {
+        session_id:        String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent_session_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        provider:          Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        model:             Option<String>,
+    },
+    /// A stage has a currently steerable API-mode session binding.
+    AgentSessionActivated {
+        node_id:      String,
+        visit:        u32,
+        session_id:   String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        thread_id:    Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        provider:     Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        model:        Option<String>,
+        capabilities: Vec<fabro_types::SessionCapability>,
+    },
+    /// A stage's steerable API-mode session binding ended.
+    AgentSessionDeactivated {
+        node_id:    String,
+        visit:      u32,
+        session_id: String,
+    },
+    /// A top-level agent session object ended its lifecycle.
+    AgentSessionEnded {
+        session_id:        String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent_session_id: Option<String>,
+    },
+    /// A steer arrived with no active session and was parked in the run-wide
+    /// pending buffer. The actor (steer author) is lifted to top-level.
+    AgentSteerBuffered {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        actor: Option<Principal>,
+    },
+    /// One or more buffered/queued steers were dropped because a cap was
+    /// reached or the run ended before they could be delivered.
+    AgentSteerDropped {
+        reason:  fabro_types::AgentSteerDroppedReason,
+        count:   u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        actor:   Option<Principal>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        node_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        visit:   Option<u32>,
+    },
     AgentCliCompleted {
         node_id:     String,
         stdout:      String,
@@ -650,6 +712,12 @@ impl Event {
             }
             Self::RunRunning => {
                 info!("Run running");
+            }
+            Self::RunInterrupt { .. } => {
+                info!("Run interrupt accepted");
+            }
+            Self::RunSteer { text, .. } => {
+                info!(text_len = text.len(), "Run steer accepted");
             }
             Self::RunBlocked { blocked_reason } => {
                 info!(?blocked_reason, "Run blocked");
@@ -1259,6 +1327,38 @@ impl Event {
                 ..
             } => {
                 debug!(node_id, exit_code, duration_ms, "Agent CLI completed");
+            }
+            Self::AgentSessionStarted {
+                session_id,
+                provider,
+                model,
+                ..
+            } => {
+                debug!(session_id, ?provider, ?model, "Agent session started");
+            }
+            Self::AgentSessionActivated {
+                node_id,
+                visit,
+                session_id,
+                ..
+            } => {
+                debug!(node_id, visit, session_id, "Agent session activated");
+            }
+            Self::AgentSessionDeactivated {
+                node_id,
+                visit,
+                session_id,
+            } => {
+                debug!(node_id, visit, session_id, "Agent session deactivated");
+            }
+            Self::AgentSessionEnded { session_id, .. } => {
+                debug!(session_id, "Agent session ended");
+            }
+            Self::AgentSteerBuffered { .. } => {
+                debug!("Steer buffered (no active session)");
+            }
+            Self::AgentSteerDropped { reason, count, .. } => {
+                warn!(?reason, count, "Steer dropped");
             }
             Self::AgentCliCancelled {
                 node_id,

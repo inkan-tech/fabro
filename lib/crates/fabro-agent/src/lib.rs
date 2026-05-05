@@ -44,7 +44,7 @@ pub use sandbox::{
     SandboxEvent, SandboxEventCallback, WorktreeEvent, WorktreeEventCallback, WorktreeOptions,
     WorktreeSandbox, format_lines_numbered, shell_quote,
 };
-pub use session::Session;
+pub use session::{CompletionCoordinator, Session, SessionControlHandle, SteeringItem};
 pub use skills::Skill;
 pub use subagent::{
     SubAgent, SubAgentEventCallback, SubAgentManager, SubAgentResult, SubAgentStatus,

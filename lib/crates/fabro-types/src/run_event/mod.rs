@@ -62,6 +62,10 @@ pub enum EventBody {
     RunStarting(RunStatusTransitionProps),
     #[serde(rename = "run.running")]
     RunRunning(RunStatusTransitionProps),
+    #[serde(rename = "run.interrupt")]
+    RunInterrupt(RunInterruptProps),
+    #[serde(rename = "run.steer")]
+    RunSteer(RunSteerProps),
     #[serde(rename = "run.blocked")]
     RunBlocked(RunBlockedProps),
     #[serde(rename = "run.unblocked")]
@@ -148,6 +152,10 @@ pub enum EventBody {
     PromptCompleted(PromptCompletedProps),
     #[serde(rename = "agent.session.started")]
     AgentSessionStarted(AgentSessionStartedProps),
+    #[serde(rename = "agent.session.activated")]
+    AgentSessionActivated(AgentSessionActivatedProps),
+    #[serde(rename = "agent.session.deactivated")]
+    AgentSessionDeactivated(AgentSessionDeactivatedProps),
     #[serde(rename = "agent.session.ended")]
     AgentSessionEnded(AgentSessionEndedProps),
     #[serde(rename = "agent.processing.end")]
@@ -170,6 +178,10 @@ pub enum EventBody {
     AgentTurnLimitReached(AgentTurnLimitReachedProps),
     #[serde(rename = "agent.steering.injected")]
     AgentSteeringInjected(AgentSteeringInjectedProps),
+    #[serde(rename = "agent.steer.buffered")]
+    AgentSteerBuffered(AgentSteerBufferedProps),
+    #[serde(rename = "agent.steer.dropped")]
+    AgentSteerDropped(AgentSteerDroppedProps),
     #[serde(rename = "agent.compaction.started")]
     AgentCompactionStarted(AgentCompactionStartedProps),
     #[serde(rename = "agent.compaction.completed")]
@@ -342,6 +354,8 @@ impl EventBody {
             Self::RunQueued(_) => "run.queued",
             Self::RunStarting(_) => "run.starting",
             Self::RunRunning(_) => "run.running",
+            Self::RunInterrupt(_) => "run.interrupt",
+            Self::RunSteer(_) => "run.steer",
             Self::RunBlocked(_) => "run.blocked",
             Self::RunUnblocked(_) => "run.unblocked",
             Self::RunRemoving(_) => "run.removing",
@@ -385,6 +399,8 @@ impl EventBody {
             Self::StagePrompt(_) => "stage.prompt",
             Self::PromptCompleted(_) => "prompt.completed",
             Self::AgentSessionStarted(_) => "agent.session.started",
+            Self::AgentSessionActivated(_) => "agent.session.activated",
+            Self::AgentSessionDeactivated(_) => "agent.session.deactivated",
             Self::AgentSessionEnded(_) => "agent.session.ended",
             Self::AgentProcessingEnd(_) => "agent.processing.end",
             Self::AgentInput(_) => "agent.input",
@@ -396,6 +412,8 @@ impl EventBody {
             Self::AgentLoopDetected(_) => "agent.loop.detected",
             Self::AgentTurnLimitReached(_) => "agent.turn.limit",
             Self::AgentSteeringInjected(_) => "agent.steering.injected",
+            Self::AgentSteerBuffered(_) => "agent.steer.buffered",
+            Self::AgentSteerDropped(_) => "agent.steer.dropped",
             Self::AgentCompactionStarted(_) => "agent.compaction.started",
             Self::AgentCompactionCompleted(_) => "agent.compaction.completed",
             Self::AgentLlmRetry(_) => "agent.llm.retry",
@@ -481,6 +499,8 @@ fn is_known_event_name(event: &str) -> bool {
             | "run.queued"
             | "run.starting"
             | "run.running"
+            | "run.interrupt"
+            | "run.steer"
             | "run.blocked"
             | "run.unblocked"
             | "run.removing"
@@ -519,6 +539,8 @@ fn is_known_event_name(event: &str) -> bool {
             | "stage.prompt"
             | "prompt.completed"
             | "agent.session.started"
+            | "agent.session.activated"
+            | "agent.session.deactivated"
             | "agent.session.ended"
             | "agent.processing.end"
             | "agent.input"
@@ -530,6 +552,8 @@ fn is_known_event_name(event: &str) -> bool {
             | "agent.loop.detected"
             | "agent.turn.limit"
             | "agent.steering.injected"
+            | "agent.steer.buffered"
+            | "agent.steer.dropped"
             | "agent.compaction.started"
             | "agent.compaction.completed"
             | "agent.llm.retry"
@@ -906,6 +930,58 @@ mod tests {
     }
 
     #[test]
+    fn run_interrupt_round_trips_with_empty_properties_and_actor() {
+        let line = json!({
+            "id": "evt_interrupt",
+            "ts": "2026-04-04T12:00:00Z",
+            "run_id": fixtures::RUN_1,
+            "event": "run.interrupt",
+            "actor": { "kind": "system", "system_kind": "engine" },
+            "properties": {}
+        });
+
+        let parsed = RunEvent::from_value(line.clone()).unwrap();
+        assert!(matches!(parsed.body, EventBody::RunInterrupt(_)));
+        assert_eq!(parsed.to_value().unwrap(), line);
+    }
+
+    #[test]
+    fn run_steer_round_trips_with_text_and_actor() {
+        let line = json!({
+            "id": "evt_steer",
+            "ts": "2026-04-04T12:00:00Z",
+            "run_id": fixtures::RUN_1,
+            "event": "run.steer",
+            "actor": { "kind": "system", "system_kind": "engine" },
+            "properties": { "text": "try another approach" }
+        });
+
+        let parsed = RunEvent::from_value(line.clone()).unwrap();
+        assert!(matches!(
+            &parsed.body,
+            EventBody::RunSteer(props) if props.text == "try another approach"
+        ));
+        assert_eq!(parsed.to_value().unwrap(), line);
+    }
+
+    #[test]
+    fn run_interrupt_then_steer_is_not_a_known_persisted_event() {
+        let line = json!({
+            "id": "evt_combined",
+            "ts": "2026-04-04T12:00:00.000Z",
+            "run_id": fixtures::RUN_1,
+            "event": "run.interrupt_then_steer",
+            "properties": { "text": "try another approach" }
+        });
+
+        let parsed = RunEvent::from_value(line).unwrap();
+        assert!(matches!(
+            parsed.body,
+            EventBody::Unknown { ref name, .. } if name == "run.interrupt_then_steer"
+        ));
+    }
+
+    #[test]
     fn run_submitted_round_trip_preserves_definition_blob() {
         let line = json!({
             "id": "evt_submitted_blob",
@@ -1028,6 +1104,35 @@ mod tests {
         );
         assert_eq!(serialized["tool_call_id"], value["tool_call_id"]);
         assert_eq!(serialized["actor"], value["actor"]);
+    }
+
+    #[test]
+    fn agent_session_ended_serializes_empty_properties() {
+        let event = RunEvent {
+            id:                 "evt_session_ended".to_string(),
+            ts:                 DateTime::parse_from_rfc3339("2026-04-04T12:00:00.000Z")
+                .unwrap()
+                .with_timezone(&Utc),
+            run_id:             fixtures::RUN_1,
+            node_id:            None,
+            node_label:         None,
+            stage_id:           None,
+            parallel_group_id:  None,
+            parallel_branch_id: None,
+            session_id:         Some("ses_abc".to_string()),
+            parent_session_id:  None,
+            tool_call_id:       None,
+            actor:              None,
+            body:               EventBody::AgentSessionEnded(AgentSessionEndedProps {}),
+        };
+
+        let serialized = event.to_value().unwrap();
+
+        assert_eq!(serialized["event"], "agent.session.ended");
+        assert_eq!(serialized["session_id"], "ses_abc");
+        assert_eq!(serialized["properties"], json!({}));
+        assert!(serialized.get("node_id").is_none());
+        assert!(serialized.get("stage_id").is_none());
     }
 
     #[test]

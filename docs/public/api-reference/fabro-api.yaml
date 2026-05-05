@@ -878,6 +878,114 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /api/v1/runs/{id}/steer:
+    post:
+      operationId: steerRun
+      tags: [Human-in-the-Loop]
+      summary: Steer Run
+      description: |
+        Send a mid-run steering message to the live agent session(s) of a
+        running run. Set `interrupt=true` to atomically interrupt the active
+        API-mode agent round first, then deliver this message as the next
+        user turn. Without `interrupt=true`, the message is appended to the
+        steering queue and may buffer until the next API-mode agent session.
+      parameters:
+        - $ref: "#/components/parameters/RunId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SteerRunRequest"
+      responses:
+        "202":
+          description: Steer accepted and forwarded to the worker
+        "400":
+          description: Invalid request body
+          headers:
+            x-request-id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Run not found
+          headers:
+            x-request-id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: |
+            Run is not currently steerable. Returned when the run is in a
+            terminal state, blocked (use the answer endpoint instead), or
+            all currently running agent stages are CLI-mode.
+          headers:
+            x-request-id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Worker control channel unavailable
+          headers:
+            x-request-id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/runs/{id}/interrupt:
+    post:
+      operationId: interruptRun
+      tags: [Human-in-the-Loop]
+      summary: Interrupt Run
+      description: |
+        Interrupt the active API-mode agent round without sending steering
+        text. The agent keeps its steering lease and waits for a later steer
+        message before starting another LLM round.
+      parameters:
+        - $ref: "#/components/parameters/RunId"
+      responses:
+        "202":
+          description: Interrupt accepted and forwarded to the worker
+        "404":
+          description: Run not found
+          headers:
+            x-request-id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: |
+            Run is not currently interruptible. Returned when the run is in a
+            terminal state, blocked (use the answer endpoint instead), has no
+            active API-mode agent session, or all currently running agent
+            stages are CLI-mode.
+          headers:
+            x-request-id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Worker control channel unavailable
+          headers:
+            x-request-id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /api/v1/runs/{id}/start:
     post:
       operationId: startRun
@@ -4531,6 +4639,27 @@ components:
           type: string
         warn:
           type: boolean
+
+    SteerRunRequest:
+      description: Request body for steering a running run mid-execution.
+      type: object
+      required:
+        - text
+      properties:
+        text:
+          type: string
+          description: The steering message text to deliver as a user turn.
+          minLength: 1
+          maxLength: 8192
+          example: Try a different approach
+        interrupt:
+          type: boolean
+          description: |
+            When true, apply a worker-control interrupt first, then deliver
+            this text as steering in the same control operation. When false
+            (default), append to the steering queue and let the agent pick it
+            up at the next turn boundary.
+          default: false
 
     StartRunRequest:
       description: Request body for starting or resuming a run.

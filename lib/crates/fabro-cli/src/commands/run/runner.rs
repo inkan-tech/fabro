@@ -86,7 +86,13 @@ pub(crate) async fn execute(
     )));
     let interviewer = Arc::new(ControlInterviewer::new());
     let cancel_token = CancellationToken::new();
-    spawn_worker_control_stream(Arc::clone(&interviewer), cancel_token.clone())?;
+    let emitter = Arc::new(Emitter::new(run_id));
+    let steering_hub = Arc::new(fabro_workflow::SteeringHub::new(Arc::clone(&emitter)));
+    spawn_worker_control_stream(
+        Arc::clone(&interviewer),
+        cancel_token.clone(),
+        Arc::clone(&steering_hub),
+    )?;
     let run_control = RunControlState::new();
     install_signal_handlers(Arc::clone(&run_control), cancel_token.clone())?;
     let vault = load_worker_vault(storage_dir.as_deref())?;
@@ -100,8 +106,9 @@ pub(crate) async fn execute(
     let services = StartServices {
         run_id,
         cancel_token: cancel_token.clone(),
-        emitter: Arc::new(Emitter::new(run_id)),
+        emitter,
         interviewer,
+        steering_hub,
         run_store: run_store.clone(),
         event_sink: RunEventSink::map(
             stamp_system_worker,
@@ -167,11 +174,13 @@ enum WorkerControlStreamEvent {
 fn spawn_worker_control_stream(
     interviewer: Arc<ControlInterviewer>,
     cancel_token: CancellationToken,
+    steering_hub: Arc<fabro_workflow::SteeringHub>,
 ) -> Result<()> {
     let (event_tx, event_rx) = mpsc::unbounded_channel();
     tokio::spawn(handle_worker_control_stream_events(
         interviewer,
         cancel_token,
+        steering_hub,
         event_rx,
     ));
     std::thread::Builder::new()
@@ -210,12 +219,13 @@ fn read_worker_control_stream_blocking<R>(
 async fn handle_worker_control_stream_events(
     interviewer: Arc<ControlInterviewer>,
     cancel_token: CancellationToken,
+    steering_hub: Arc<fabro_workflow::SteeringHub>,
     mut event_rx: mpsc::UnboundedReceiver<WorkerControlStreamEvent>,
 ) {
     while let Some(event) = event_rx.recv().await {
         match event {
             WorkerControlStreamEvent::Line(line) => {
-                apply_worker_control_line(&interviewer, &cancel_token, &line).await;
+                apply_worker_control_line(&interviewer, &cancel_token, &steering_hub, &line).await;
             }
             WorkerControlStreamEvent::Eof => {
                 interviewer.interrupt_all().await;
@@ -230,6 +240,7 @@ async fn handle_worker_control_stream_events(
 async fn apply_worker_control_line(
     interviewer: &ControlInterviewer,
     cancel_token: &CancellationToken,
+    steering_hub: &fabro_workflow::SteeringHub,
     line: &str,
 ) {
     if line.trim().is_empty() {
@@ -249,6 +260,15 @@ async fn apply_worker_control_line(
         WorkerControlMessage::RunCancel => {
             cancel_token.cancel();
             interviewer.interrupt_all().await;
+        }
+        WorkerControlMessage::Steer { text, actor } => {
+            steering_hub.deliver_steer(text, Some(actor));
+        }
+        WorkerControlMessage::Interrupt { actor } => {
+            steering_hub.interrupt(Some(&actor));
+        }
+        WorkerControlMessage::InterruptThenSteer { text, actor } => {
+            steering_hub.interrupt_then_steer(&text, Some(&actor));
         }
     }
 }
@@ -649,6 +669,11 @@ mod tests {
     };
     use crate::args::RunWorkerMode;
 
+    fn test_steering_hub() -> Arc<fabro_workflow::SteeringHub> {
+        let emitter = Arc::new(fabro_workflow::event::Emitter::new(fixtures::RUN_1));
+        Arc::new(fabro_workflow::SteeringHub::new(emitter))
+    }
+
     #[test]
     fn clone_sandbox_credentials_are_required_for_clone_based_providers() {
         assert!(super::clone_sandbox_requires_github_credentials("docker"));
@@ -846,9 +871,11 @@ mod tests {
         let ask_interviewer = Arc::clone(&interviewer);
         let answer_task = tokio::spawn(async move { ask_interviewer.ask(question).await });
 
+        let hub = test_steering_hub();
         apply_worker_control_line(
             &interviewer,
             &cancel_token,
+            &hub,
             r#"{"v":1,"type":"interview.answer","qid":"q-1","answer":{"kind":"yes"},"actor":{"kind":"system","system_kind":"engine"}}"#,
         )
         .await;
@@ -868,9 +895,11 @@ mod tests {
         let answer_task = tokio::spawn(async move { ask_interviewer.ask(question).await });
         tokio::task::yield_now().await;
 
+        let hub = test_steering_hub();
         apply_worker_control_line(
             &interviewer,
             &cancel_token,
+            &hub,
             r#"{"v":1,"type":"run.cancel"}"#,
         )
         .await;
@@ -920,9 +949,11 @@ mod tests {
         event_tx.send(WorkerControlStreamEvent::Eof).unwrap();
         drop(event_tx);
 
+        let hub = test_steering_hub();
         handle_worker_control_stream_events(
             Arc::clone(&interviewer),
             cancel_token.clone(),
+            hub,
             event_rx,
         )
         .await;

@@ -100,6 +100,12 @@ fn event_body_from_event(event: &Event) -> EventBody {
         Event::RunRunning => {
             EventBody::RunRunning(fabro_types::RunStatusTransitionProps::default())
         }
+        Event::RunInterrupt { .. } => {
+            EventBody::RunInterrupt(fabro_types::RunInterruptProps::default())
+        }
+        Event::RunSteer { text, .. } => {
+            EventBody::RunSteer(fabro_types::RunSteerProps { text: text.clone() })
+        }
         Event::RunBlocked { blocked_reason } => {
             EventBody::RunBlocked(fabro_types::RunBlockedProps {
                 blocked_reason: *blocked_reason,
@@ -531,16 +537,6 @@ fn event_body_from_event(event: &Event) -> EventBody {
             billing:  billing.clone(),
         }),
         Event::Agent { visit, event, .. } => match event {
-            AgentEvent::SessionStarted { provider, model } => {
-                EventBody::AgentSessionStarted(fabro_types::AgentSessionStartedProps {
-                    provider: provider.clone(),
-                    model:    model.clone(),
-                    visit:    *visit,
-                })
-            }
-            AgentEvent::SessionEnded => {
-                EventBody::AgentSessionEnded(fabro_types::AgentSessionEndedProps { visit: *visit })
-            }
             AgentEvent::ProcessingEnd => {
                 EventBody::AgentProcessingEnd(fabro_types::AgentProcessingEndProps {
                     visit: *visit,
@@ -607,7 +603,7 @@ fn event_body_from_event(event: &Event) -> EventBody {
                     visit:     *visit,
                 })
             }
-            AgentEvent::SteeringInjected { text } => {
+            AgentEvent::SteeringInjected { text, .. } => {
                 EventBody::AgentSteeringInjected(fabro_types::AgentSteeringInjectedProps {
                     text:  text.clone(),
                     visit: *visit,
@@ -706,9 +702,11 @@ fn event_body_from_event(event: &Event) -> EventBody {
             | AgentEvent::TextDelta { .. }
             | AgentEvent::ReasoningDelta { .. }
             | AgentEvent::ToolCallOutputDelta { .. }
-            | AgentEvent::SkillExpanded { .. } => {
-                panic!("streaming-noise agent event should not be converted to RunEvent")
-            }
+            | AgentEvent::SkillExpanded { .. }
+            | AgentEvent::SessionStarted { .. }
+            | AgentEvent::SessionEnded => panic!(
+                "agent event should not be converted through the stage-scoped Event::Agent wrapper"
+            ),
         },
         Event::SubgraphStarted { start_node, .. } => {
             EventBody::SubgraphStarted(fabro_types::SubgraphStartedProps {
@@ -1008,6 +1006,43 @@ fn event_body_from_event(event: &Event) -> EventBody {
             exit_code:   *exit_code,
             duration_ms: *duration_ms,
         }),
+        Event::AgentSessionStarted {
+            provider, model, ..
+        } => EventBody::AgentSessionStarted(fabro_types::AgentSessionStartedProps {
+            provider: provider.clone(),
+            model:    model.clone(),
+        }),
+        Event::AgentSessionActivated {
+            thread_id,
+            provider,
+            model,
+            capabilities,
+            visit,
+            ..
+        } => EventBody::AgentSessionActivated(fabro_types::AgentSessionActivatedProps {
+            thread_id:    thread_id.clone(),
+            provider:     provider.clone(),
+            model:        model.clone(),
+            capabilities: capabilities.clone(),
+            visit:        *visit,
+        }),
+        Event::AgentSessionDeactivated { visit, .. } => {
+            EventBody::AgentSessionDeactivated(fabro_types::AgentSessionDeactivatedProps {
+                visit: *visit,
+            })
+        }
+        Event::AgentSessionEnded { .. } => {
+            EventBody::AgentSessionEnded(fabro_types::AgentSessionEndedProps {})
+        }
+        Event::AgentSteerBuffered { .. } => {
+            EventBody::AgentSteerBuffered(fabro_types::AgentSteerBufferedProps::default())
+        }
+        Event::AgentSteerDropped { reason, count, .. } => {
+            EventBody::AgentSteerDropped(fabro_types::AgentSteerDroppedProps {
+                reason: *reason,
+                count:  *count,
+            })
+        }
         Event::AgentCliCancelled {
             stdout,
             stderr,

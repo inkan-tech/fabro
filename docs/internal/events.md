@@ -200,6 +200,40 @@ Informational, warning, or error notice emitted during the run.
 | `code` | string | Machine-readable notice code |
 | `message` | string | Human-readable message |
 
+### `run.interrupt`
+
+Emitted after a live worker accepts a run interrupt control operation. The
+actor is stored in the top-level `actor` envelope field. Properties are empty.
+
+```json
+{
+  "id": "...", "ts": "...", "run_id": "...",
+  "event": "run.interrupt",
+  "actor": { "kind": "user", "login": "octocat" },
+  "properties": {}
+}
+```
+
+### `run.steer`
+
+Emitted after a live worker accepts run steering text. The actor is stored in
+the top-level `actor` envelope field.
+
+```json
+{
+  "id": "...", "ts": "...", "run_id": "...",
+  "event": "run.steer",
+  "actor": { "kind": "user", "login": "octocat" },
+  "properties": {
+    "text": "Remember to run tests after changes"
+  }
+}
+```
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `text` | string | Accepted steering text |
+
 ### `metadata.snapshot.started`
 
 Emitted when Fabro begins a durable metadata snapshot operation. These are product events for Fabro metadata snapshots, not tracing spans for the underlying git or filesystem work.
@@ -863,7 +897,7 @@ Emitted when execution loops back to an earlier node.
 
 ## Agent events
 
-All agent events have `node_id` (the workflow stage), `node_label`, `session_id`, and `parent_session_id` in the envelope. The `properties` contain the inner agent event fields.
+Most agent activity events are stage-scoped and carry `node_id` (the workflow stage), `node_label`, `stage_id`, `session_id`, and `parent_session_id` in the envelope. Session object lifecycle events are the exception: `agent.session.started` and `agent.session.ended` are not stage-scoped and intentionally omit `node_id`, `node_label`, `stage_id`, and `visit`.
 
 ### `agent.session.started`
 
@@ -871,13 +905,49 @@ All agent events have `node_id` (the workflow stage), `node_label`, `session_id`
 {
   "id": "...", "ts": "...", "run_id": "...",
   "event": "agent.session.started",
-  "node_id": "code", "node_label": "code",
   "session_id": "ses_abc", "parent_session_id": null,
-  "properties": {}
+  "properties": {
+    "provider": "openai",
+    "model": "gpt-5.4"
+  }
 }
 ```
 
-No properties.
+Object-lifecycle event. `session_id` and `parent_session_id` are envelope fields. `properties.provider` and `properties.model` are optional.
+
+### `agent.session.activated`
+
+```json
+{
+  "id": "...", "ts": "...", "run_id": "...",
+  "event": "agent.session.activated",
+  "node_id": "code", "node_label": "code", "stage_id": "code@1",
+  "session_id": "ses_abc",
+  "properties": {
+    "thread_id": "main",
+    "provider": "openai",
+    "model": "gpt-5.4",
+    "capabilities": ["steer"],
+    "visit": 1
+  }
+}
+```
+
+Stage-scoped lease event. A stage is steerable while the latest matching `agent.session.activated` lease is active.
+
+### `agent.session.deactivated`
+
+```json
+{
+  "id": "...", "ts": "...", "run_id": "...",
+  "event": "agent.session.deactivated",
+  "node_id": "code", "node_label": "code", "stage_id": "code@1",
+  "session_id": "ses_abc",
+  "properties": { "visit": 1 }
+}
+```
+
+Stage-scoped lease event. Consumers should pair it by `stage_id` and `session_id` so stale deactivations cannot clear a newer active lease.
 
 ### `agent.session.ended`
 
@@ -885,13 +955,12 @@ No properties.
 {
   "id": "...", "ts": "...", "run_id": "...",
   "event": "agent.session.ended",
-  "node_id": "code", "node_label": "code",
   "session_id": "ses_abc",
   "properties": {}
 }
 ```
 
-No properties.
+Object-lifecycle event. `session_id` and `parent_session_id` are envelope fields. No properties.
 
 ### `agent.processing.end`
 

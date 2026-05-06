@@ -1,6 +1,6 @@
 # Events
 
-Every serialized run event envelope, whether streamed over SSE, returned by `fabro logs`, or written to a JSONL sink, uses this structure:
+Every serialized run event envelope, whether streamed over SSE, returned by `fabro events`, or written to a JSONL sink, uses this structure:
 
 ```json
 {

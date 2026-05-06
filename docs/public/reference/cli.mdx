@@ -73,11 +73,12 @@ fabro [OPTIONS] [COMMAND]
 | `fabro docs` | Open the docs website in the browser |
 | `fabro doctor` | Check environment and integration health |
 | `fabro dump` | Export a run's durable state to a directory |
+| `fabro events` | View the event log of a workflow run |
 | `fabro fork` | Fork a workflow run from an earlier checkpoint into a new run |
 | `fabro graph` | Render a workflow graph as SVG |
 | `fabro inspect` | Show detailed information about a workflow run |
 | `fabro install` | Set up the Fabro environment (LLMs, certs, GitHub) |
-| `fabro logs` | View the event log of a workflow run |
+| `fabro logs` | View the raw worker tracing log of a workflow run |
 | `fabro model` | List and test LLM models |
 | `fabro pr` | Pull request operations |
 | `fabro preflight` | Validate run configuration without executing |
@@ -364,6 +365,30 @@ fabro dump [OPTIONS] --output <OUTPUT> <RUN>
 | `-o, --output <output>` | Output directory (must not exist or be empty) |
 | `--server <server>` | Fabro server target: http(s) URL or absolute Unix socket path |
 
+### `fabro events`
+
+View the event log of a workflow run
+
+```bash
+fabro events [OPTIONS] <RUN>
+```
+
+#### Arguments
+
+| Name | Description |
+| --- | --- |
+| `RUN` | Run ID prefix or workflow name (most recent run) |
+
+#### Options
+
+| Option | Description |
+| --- | --- |
+| `-f, --follow` | Follow event output |
+| `-p, --pretty` | Formatted colored output with rendered assistant text |
+| `--server <server>` | Fabro server target: http(s) URL or absolute Unix socket path |
+| `--since <since>` | Events since timestamp or relative (e.g. "42m", "2h", "2026-01-02T13:00:00Z") |
+| `-n, --tail <tail>` | Lines from end (default: all) |
+
 ### `fabro fork`
 
 Fork a workflow run from an earlier checkpoint into a new run
@@ -467,7 +492,7 @@ fabro install github [OPTIONS]
 
 ### `fabro logs`
 
-View the event log of a workflow run
+View the raw worker tracing log of a workflow run
 
 ```bash
 fabro logs [OPTIONS] <RUN>
@@ -483,10 +508,7 @@ fabro logs [OPTIONS] <RUN>
 
 | Option | Description |
 | --- | --- |
-| `-f, --follow` | Follow log output |
-| `-p, --pretty` | Formatted colored output with rendered assistant text |
 | `--server <server>` | Fabro server target: http(s) URL or absolute Unix socket path |
-| `--since <since>` | Logs since timestamp or relative (e.g. "42m", "2h", "2026-01-02T13:00:00Z") |
 | `-n, --tail <tail>` | Lines from end (default: all) |
 
 ### `fabro model`

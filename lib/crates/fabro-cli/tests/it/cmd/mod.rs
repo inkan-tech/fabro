@@ -11,6 +11,7 @@ mod discord;
 mod docs;
 mod doctor;
 mod dump;
+mod events;
 mod exec;
 mod fabro;
 mod fork;

@@ -158,7 +158,7 @@ For cache-backed lifecycle work, emit slow-path start events only when the opera
 Check:
 
 - CLI progress parsing
-- `fabro logs`
+- `fabro events`
 - retro duration extraction
 - store validation
 - tests or fixtures that inspect event names or fields

@@ -279,7 +279,7 @@ fn attach_before_completion_streams_to_finished_state() {
 #[test]
 #[expect(
     clippy::disallowed_methods,
-    reason = "This sync integration test polls logs for a human gate without creating a Tokio runtime."
+    reason = "This sync integration test polls events for a human gate without creating a Tokio runtime."
 )]
 fn attach_json_errors_without_prompting_for_human_input() {
     let context = test_context!();
@@ -331,13 +331,13 @@ fn attach_json_errors_without_prompting_for_human_input() {
     }
     let deadline = std::time::Instant::now() + SHARED_DAEMON_TIMEOUT;
     loop {
-        let logs_output = context
+        let events_output = context
             .command()
-            .args(["logs", &run_id, "--json"])
+            .args(["events", &run_id, "--json"])
             .output()
-            .expect("logs should execute");
-        assert!(logs_output.status.success(), "logs should succeed");
-        let log_events: Vec<Value> = String::from_utf8(logs_output.stdout)
+            .expect("events should execute");
+        assert!(events_output.status.success(), "events should succeed");
+        let log_events: Vec<Value> = String::from_utf8(events_output.stdout)
             .expect("stdout should be UTF-8")
             .lines()
             .filter(|line| !line.trim().is_empty())
@@ -371,13 +371,13 @@ fn attach_json_errors_without_prompting_for_human_input() {
         !stderr.contains("Approve?"),
         "attach should not prompt on stderr"
     );
-    let logs_output = context
+    let events_output = context
         .command()
-        .args(["logs", &run_id, "--json"])
+        .args(["events", &run_id, "--json"])
         .output()
-        .expect("logs should execute");
-    assert!(logs_output.status.success(), "logs should succeed");
-    let log_events: Vec<Value> = String::from_utf8(logs_output.stdout)
+        .expect("events should execute");
+    assert!(events_output.status.success(), "events should succeed");
+    let log_events: Vec<Value> = String::from_utf8(events_output.stdout)
         .expect("stdout should be UTF-8")
         .lines()
         .filter(|line| !line.trim().is_empty())

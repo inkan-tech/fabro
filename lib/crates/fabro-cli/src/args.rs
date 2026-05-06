@@ -365,16 +365,16 @@ pub(crate) struct RunsUnarchiveArgs {
 }
 
 #[derive(Args)]
-pub(crate) struct LogsArgs {
+pub(crate) struct EventsArgs {
     #[command(flatten)]
     pub(crate) server: ServerTargetArgs,
 
     /// Run ID prefix or workflow name (most recent run)
     pub(crate) run:    String,
-    /// Follow log output
+    /// Follow event output
     #[arg(short, long)]
     pub(crate) follow: bool,
-    /// Logs since timestamp or relative (e.g. "42m", "2h",
+    /// Events since timestamp or relative (e.g. "42m", "2h",
     /// "2026-01-02T13:00:00Z")
     #[arg(long)]
     pub(crate) since:  Option<String>,
@@ -384,6 +384,18 @@ pub(crate) struct LogsArgs {
     /// Formatted colored output with rendered assistant text
     #[arg(short = 'p', long)]
     pub(crate) pretty: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct LogsArgs {
+    #[command(flatten)]
+    pub(crate) server: ServerTargetArgs,
+
+    /// Run ID prefix or workflow name (most recent run)
+    pub(crate) run:  String,
+    /// Lines from end (default: all)
+    #[arg(short = 'n', long)]
+    pub(crate) tail: Option<usize>,
 }
 
 #[derive(Args)]
@@ -974,6 +986,8 @@ pub(crate) enum RunCommands {
     #[command(hide = true)]
     Diff(DiffArgs),
     /// View the event log of a workflow run
+    Events(EventsArgs),
+    /// View the raw worker tracing log of a workflow run
     Logs(LogsArgs),
     /// Resume an interrupted workflow run
     Resume(ResumeArgs),
@@ -996,6 +1010,7 @@ impl RunCommands {
             Self::Attach(_) => "attach",
             Self::RunWorker(_) => "__run-worker",
             Self::Diff(_) => "diff",
+            Self::Events(_) => "events",
             Self::Logs(_) => "logs",
             Self::Resume(_) => "resume",
             Self::Rewind(_) => "rewind",

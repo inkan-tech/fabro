@@ -785,12 +785,12 @@ fn dry_run_persists_event_history_in_store() {
     wait_for_event_names(&run_dir, &["run.completed", "sandbox.cleanup.completed"]);
     let output = context
         .command()
-        .args(["logs", &run_id])
+        .args(["events", &run_id])
         .output()
-        .expect("logs command should execute");
+        .expect("events command should execute");
     assert!(
         output.status.success(),
-        "logs failed:\nstdout:\n{}\nstderr:\n{}",
+        "events failed:\nstdout:\n{}\nstderr:\n{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
@@ -798,7 +798,7 @@ fn dry_run_persists_event_history_in_store() {
         .expect("stdout should be UTF-8")
         .lines()
         .filter(|line| !line.trim().is_empty())
-        .map(|line| serde_json::from_str(line).expect("logs output should be JSONL"))
+        .map(|line| serde_json::from_str(line).expect("events output should be JSONL"))
         .collect();
     assert!(
         !progress.is_empty(),
@@ -828,12 +828,12 @@ fn dry_run_persists_event_history_in_store() {
 
     let tail_output = context
         .command()
-        .args(["logs", "--tail", "1", &run_id])
+        .args(["events", "--tail", "1", &run_id])
         .output()
-        .expect("tail logs command should execute");
+        .expect("tail events command should execute");
     assert!(
         tail_output.status.success(),
-        "tail logs failed:\nstdout:\n{}\nstderr:\n{}",
+        "tail events failed:\nstdout:\n{}\nstderr:\n{}",
         String::from_utf8_lossy(&tail_output.stdout),
         String::from_utf8_lossy(&tail_output.stderr)
     );
@@ -841,8 +841,8 @@ fn dry_run_persists_event_history_in_store() {
         .expect("stdout should be UTF-8")
         .lines()
         .find(|line| !line.trim().is_empty())
-        .map(|line| serde_json::from_str(line).expect("tail logs output should be JSON"))
-        .expect("tail logs should include the latest event");
+        .map(|line| serde_json::from_str(line).expect("tail events output should be JSON"))
+        .expect("tail events should include the latest event");
     fabro_json_snapshot!(context, &live_content, @r#"
     {
       "actor": {

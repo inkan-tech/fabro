@@ -14,6 +14,7 @@ pub(crate) mod command;
 pub(crate) mod cp;
 pub(crate) mod create;
 pub(crate) mod diff;
+pub(crate) mod events;
 pub(crate) mod fork;
 pub(crate) mod logs;
 pub(crate) mod output;
@@ -99,10 +100,11 @@ pub(crate) async fn dispatch(
             .await
         }
         RunCommands::Diff(args) => diff::run(args, base_ctx).await,
-        RunCommands::Logs(args) => {
+        RunCommands::Events(args) => {
             let styles = Styles::detect_stdout();
-            logs::run(&args, &styles, base_ctx).await
+            events::run(&args, &styles, base_ctx).await
         }
+        RunCommands::Logs(args) => logs::run(&args, base_ctx).await,
         RunCommands::Resume(args) => {
             let styles: &'static Styles = Box::leak(Box::new(Styles::detect_stderr()));
             #[cfg(feature = "sleep_inhibitor")]

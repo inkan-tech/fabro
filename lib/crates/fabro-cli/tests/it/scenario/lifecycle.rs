@@ -67,13 +67,13 @@ fn local_run_lifecycle() {
         items[0]["conclusion"].is_object(),
         "inspect should include conclusion"
     );
-    // 4. logs <run_id> — non-empty, first line is valid JSONL with event field
-    let logs_out = cmd(&["logs", &run_id]).success();
-    let logs_stdout = String::from_utf8(logs_out.get_output().stdout.clone()).unwrap();
-    assert!(!logs_stdout.is_empty(), "logs should not be empty");
-    let first_line = logs_stdout.lines().next().unwrap();
+    // 4. events <run_id> — non-empty, first line is valid JSONL with event field
+    let events_out = cmd(&["events", &run_id]).success();
+    let events_stdout = String::from_utf8(events_out.get_output().stdout.clone()).unwrap();
+    assert!(!events_stdout.is_empty(), "events should not be empty");
+    let first_line = events_stdout.lines().next().unwrap();
     let log_entry: Value =
-        serde_json::from_str(first_line).expect("first log line should be valid JSON");
+        serde_json::from_str(first_line).expect("first event line should be valid JSON");
     assert!(
         log_entry["event"].is_string(),
         "first log line should have an event field"

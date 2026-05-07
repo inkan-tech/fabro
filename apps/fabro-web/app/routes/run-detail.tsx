@@ -4,14 +4,15 @@ import {
   useState,
   type CSSProperties,
 } from "react";
-import { ArrowPathIcon, ChevronRightIcon } from "@heroicons/react/20/solid";
+import { ArrowPathIcon, ChevronDownIcon, ChevronRightIcon } from "@heroicons/react/20/solid";
 import { Link, Outlet, useLocation, useMatches } from "react-router";
+import { Menu, MenuButton, MenuItem, MenuItems } from "@headlessui/react";
 
 import { InterviewDock } from "../components/interview-dock";
 import { SteerComposer } from "../components/steer-composer";
 import { ErrorState } from "../components/state";
 import { useToast } from "../components/toast";
-import { PRIMARY_BUTTON_CLASS, SECONDARY_BUTTON_CLASS } from "../components/ui";
+import { SECONDARY_BUTTON_CLASS } from "../components/ui";
 import {
   isRunStatus,
   mapRunSummaryToRunItem,
@@ -50,11 +51,14 @@ const allTabs = [
 
 export const handle = { hideHeader: true };
 
-const CANCEL_BUTTON_CLASS =
-  "inline-flex items-center justify-center gap-2 rounded-lg border border-coral/30 bg-coral/10 px-4 py-2 text-sm font-medium text-coral transition-colors hover:bg-coral/15 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-500 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-coral/10";
-
-const MUTATION_BUTTON_CLASS =
+const ACTIONS_TRIGGER_CLASS =
   `${SECONDARY_BUTTON_CLASS} disabled:cursor-not-allowed disabled:opacity-60`;
+
+const MENU_ITEM_CLASS =
+  "flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-fg-3 transition-colors data-focus:bg-overlay data-focus:text-fg data-focus:outline-hidden disabled:cursor-not-allowed disabled:opacity-60";
+
+const MENU_ITEM_DANGER_CLASS =
+  "flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-coral transition-colors data-focus:bg-coral/10 data-focus:text-coral data-focus:outline-hidden disabled:cursor-not-allowed disabled:opacity-60";
 
 function classNames(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
@@ -237,78 +241,25 @@ export default function RunDetail({ params }: { params: { id: string } }) {
           </div>
         </div>
 
-        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-          {statusKind === "running" && (
-            <div>
-              <button
-                type="button"
-                onClick={() => setSteerOpen(true)}
-                className={MUTATION_BUTTON_CLASS}
-              >
-                Steer
-              </button>
-            </div>
-          )}
-
-          {visibility.showPrimaryCancel && (
-            <div>
-              <button
-                type="button"
-                onClick={() => void cancelMutation.trigger()}
-                disabled={cancelPending}
-                className={CANCEL_BUTTON_CLASS}
-              >
-                {cancelPending && <ArrowPathIcon className="size-4 animate-spin" aria-hidden="true" />}
-                {cancelPending ? "Cancelling…" : "Cancel"}
-              </button>
-            </div>
-          )}
-
-          {visibility.showArchive && (
-            <div>
-              <button
-                type="button"
-                onClick={() => void archiveMutation.trigger()}
-                disabled={archivePending}
-                className={MUTATION_BUTTON_CLASS}
-              >
-                {archivePending && <ArrowPathIcon className="size-4 animate-spin" aria-hidden="true" />}
-                {archivePending ? "Archiving…" : "Archive"}
-              </button>
-            </div>
-          )}
-
-          {visibility.showUnarchive && (
-            <div>
-              <button
-                type="button"
-                onClick={() => void unarchiveMutation.trigger()}
-                disabled={unarchivePending}
-                className={MUTATION_BUTTON_CLASS}
-              >
-                {unarchivePending && <ArrowPathIcon className="size-4 animate-spin" aria-hidden="true" />}
-                {unarchivePending ? "Restoring…" : "Unarchive"}
-              </button>
-            </div>
-          )}
-
-          {run.sandboxId && (
-            <div>
-              <button
-                type="button"
-                onClick={() => void previewMutation.trigger({
-                  port: 3000,
-                  expires_in_secs: 3600,
-                })}
-                disabled={previewPending}
-                className={PRIMARY_BUTTON_CLASS}
-              >
-                {previewPending && <ArrowPathIcon className="size-4 animate-spin" aria-hidden="true" />}
-                {previewPending ? "Opening…" : "Preview"}
-              </button>
-            </div>
-          )}
-        </div>
+        <ActionsMenu
+          canSteer={statusKind === "running"}
+          onSteer={() => setSteerOpen(true)}
+          canPreview={!!run.sandboxId}
+          previewPending={previewPending}
+          onPreview={() => void previewMutation.trigger({
+            port: 3000,
+            expires_in_secs: 3600,
+          })}
+          canArchive={visibility.showArchive}
+          archivePending={archivePending}
+          onArchive={() => void archiveMutation.trigger()}
+          canUnarchive={visibility.showUnarchive}
+          unarchivePending={unarchivePending}
+          onUnarchive={() => void unarchiveMutation.trigger()}
+          canCancel={visibility.showPrimaryCancel}
+          cancelPending={cancelPending}
+          onCancel={() => void cancelMutation.trigger()}
+        />
       </div>
 
       <div
@@ -413,4 +364,114 @@ export function handleLifecycleToastResult(
 
   toastApi.push({ message: "Run restored." });
   return { ...nextState, activeArchiveToastId: null };
+}
+
+interface ActionsMenuProps {
+  canSteer: boolean;
+  onSteer: () => void;
+  canPreview: boolean;
+  previewPending: boolean;
+  onPreview: () => void;
+  canArchive: boolean;
+  archivePending: boolean;
+  onArchive: () => void;
+  canUnarchive: boolean;
+  unarchivePending: boolean;
+  onUnarchive: () => void;
+  canCancel: boolean;
+  cancelPending: boolean;
+  onCancel: () => void;
+}
+
+function ActionsMenu(props: ActionsMenuProps) {
+  const {
+    canSteer, onSteer,
+    canPreview, previewPending, onPreview,
+    canArchive, archivePending, onArchive,
+    canUnarchive, unarchivePending, onUnarchive,
+    canCancel, cancelPending, onCancel,
+  } = props;
+
+  const hasOps = canPreview || canSteer;
+  const hasLifecycle = canArchive || canUnarchive;
+  const hasDestructive = canCancel;
+  const hasAny = hasOps || hasLifecycle || hasDestructive;
+  const anyPending = previewPending || archivePending || unarchivePending || cancelPending;
+
+  if (!hasAny) return null;
+
+  return (
+    <Menu as="div" className="shrink-0">
+      <MenuButton className={ACTIONS_TRIGGER_CLASS} disabled={anyPending}>
+        {anyPending && <ArrowPathIcon className="size-4 animate-spin" aria-hidden="true" />}
+        Actions
+        <ChevronDownIcon className="-mr-1 size-4 text-fg-muted" aria-hidden="true" />
+      </MenuButton>
+      <MenuItems
+        transition
+        anchor={{ to: "bottom end", gap: 4 }}
+        className="z-20 w-44 origin-top-right rounded-md bg-panel py-1 outline-1 -outline-offset-1 outline-line-strong transition data-closed:scale-95 data-closed:opacity-0 data-enter:duration-100 data-enter:ease-out data-leave:duration-75 data-leave:ease-in"
+      >
+        {canPreview && (
+          <MenuItem>
+            <button
+              type="button"
+              onClick={onPreview}
+              disabled={previewPending}
+              className={MENU_ITEM_CLASS}
+            >
+              {previewPending ? "Opening…" : "Preview"}
+            </button>
+          </MenuItem>
+        )}
+        {canSteer && (
+          <MenuItem>
+            <button type="button" onClick={onSteer} className={MENU_ITEM_CLASS}>
+              Steer
+            </button>
+          </MenuItem>
+        )}
+        {hasOps && hasLifecycle && <div className="my-1 h-px bg-line" role="separator" />}
+        {canArchive && (
+          <MenuItem>
+            <button
+              type="button"
+              onClick={onArchive}
+              disabled={archivePending}
+              className={MENU_ITEM_CLASS}
+            >
+              {archivePending ? "Archiving…" : "Archive"}
+            </button>
+          </MenuItem>
+        )}
+        {canUnarchive && (
+          <MenuItem>
+            <button
+              type="button"
+              onClick={onUnarchive}
+              disabled={unarchivePending}
+              className={MENU_ITEM_CLASS}
+            >
+              {unarchivePending ? "Restoring…" : "Unarchive"}
+            </button>
+          </MenuItem>
+        )}
+        {(hasOps || hasLifecycle) && hasDestructive && (
+          <div className="my-1 h-px bg-line" role="separator" />
+        )}
+        {canCancel && (
+          <MenuItem>
+            <button
+              type="button"
+              onClick={onCancel}
+              disabled={cancelPending}
+              className={MENU_ITEM_DANGER_CLASS}
+            >
+              {cancelPending ? "Cancelling…" : "Cancel"}
+            </button>
+          </MenuItem>
+        )}
+      </MenuItems>
+    </Menu>
+  );
 }

@@ -231,9 +231,6 @@ function turnLabel(turn: TurnType): string {
 }
 
 function turnTone(turn: TurnType): string {
-  if (turn.kind === "tool" && turn.isError) {
-    return "bg-coral/15 text-coral";
-  }
   switch (turn.kind) {
     case "system":
       return "bg-amber/15 text-amber";
@@ -421,6 +418,11 @@ function EventRow({
         {turnSummary(turn)}
       </span>
       <span className="inline-flex items-center justify-end gap-1.5 font-mono text-xs tabular-nums text-fg-muted">
+        {turn.kind === "tool" && turn.isError && (
+          <span className="rounded bg-coral/15 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-coral">
+            Error
+          </span>
+        )}
         {MetricIcon && <MetricIcon className="size-3" aria-hidden="true" />}
         {metric ?? ""}
       </span>

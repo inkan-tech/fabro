@@ -4,7 +4,14 @@ import {
   useState,
   type CSSProperties,
 } from "react";
-import { ArrowPathIcon, ChevronDownIcon, ChevronRightIcon } from "@heroicons/react/20/solid";
+import {
+  ArrowPathIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
+  ClockIcon,
+  FolderIcon,
+  RectangleStackIcon,
+} from "@heroicons/react/20/solid";
 import { Link, Outlet, useLocation, useMatches } from "react-router";
 import { Menu, MenuButton, MenuItem, MenuItems } from "@headlessui/react";
 
@@ -234,9 +241,19 @@ export default function RunDetail({ params }: { params: { id: string } }) {
               <span className={`size-2 rounded-full ${run.statusDot}`} />
               <span className={`font-medium ${run.statusText}`}>{run.statusLabel}</span>
             </span>
-            <span className="font-mono text-xs text-fg-muted">{run.repo}</span>
+            <span className="flex items-center gap-1 font-mono text-xs text-fg-muted">
+              <FolderIcon className="size-3" aria-hidden="true" />
+              {run.repo}
+            </span>
+            <span className="flex items-center gap-1 font-mono text-xs text-fg-muted">
+              <RectangleStackIcon className="size-3" aria-hidden="true" />
+              {run.workflow}
+            </span>
             {run.elapsed && (
-              <span className="font-mono text-xs text-fg-muted">{run.elapsed}</span>
+              <span className="flex items-center gap-1 font-mono text-xs text-fg-muted">
+                <ClockIcon className="size-3" aria-hidden="true" />
+                {run.elapsed}
+              </span>
             )}
           </div>
         </div>

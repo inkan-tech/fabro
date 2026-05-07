@@ -51,7 +51,7 @@ import {
   type EventEnvelope,
 } from "@qltysh/fabro-api-client";
 
-export const handle = { wide: true };
+export const handle = { wide: true, fullHeight: true };
 
 type TurnType =
   | { kind: "system"; content: string }
@@ -615,10 +615,14 @@ export default function RunStages() {
   const SelectedIcon = selectedConfig.icon;
 
   return (
-    <div className="flex gap-6">
-      <StageSidebar stages={stages} runId={id} selectedStageId={selectedStage.id} />
+    <div className="-mt-6 -mb-6 flex h-[calc(100%+3rem)] min-h-0">
+      <div className="shrink-0 pb-6 pr-3 pt-6">
+        <StageSidebar stages={stages} runId={id} selectedStageId={selectedStage.id} />
+      </div>
 
-      <div className="min-w-0 flex-1 space-y-3">
+      <div className="w-px shrink-0 bg-line" aria-hidden="true" />
+
+      <div className="min-w-0 flex-1 space-y-3 overflow-y-auto pb-6 pl-3 pt-6">
         <div className="sticky top-0 z-10 -mx-2 flex items-center gap-2 bg-page/85 px-2 py-2 backdrop-blur">
           <SelectedIcon className={`size-5 ${selectedConfig.color} ${isActive ? "animate-spin" : ""}`} />
           <h3 className="text-base font-semibold text-fg">

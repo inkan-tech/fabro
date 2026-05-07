@@ -311,8 +311,8 @@ function formatTokenCount(n: number): string {
 export function turnMetric(turn: TurnType): string | null {
   switch (turn.kind) {
     case "assistant": {
-      const total = turn.inputTokens + turn.outputTokens;
-      return total > 0 ? `${formatTokenCount(total)} tok` : null;
+      if (turn.inputTokens === 0 && turn.outputTokens === 0) return null;
+      return `${formatTokenCount(turn.inputTokens)} / ${formatTokenCount(turn.outputTokens)}`;
     }
     case "tool":
     case "command":
@@ -363,7 +363,7 @@ function EventRow({
       type="button"
       onClick={onSelect}
       aria-pressed={selected}
-      className={`grid w-full grid-cols-[5rem_1fr_auto_auto] items-center gap-4 px-5 py-1.5 text-left transition-colors hover:bg-overlay focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-teal-500 ${
+      className={`grid w-full grid-cols-[5rem_1fr_auto_auto] items-center gap-4 px-5 py-2.5 text-left transition-colors hover:bg-overlay focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-teal-500 ${
         selected ? "bg-overlay" : ""
       }`}
     >

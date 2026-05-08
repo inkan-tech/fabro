@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
-import { Link } from "react-router";
+import { Link, useSearchParams } from "react-router";
 import { ArchiveBoxIcon, ChevronDownIcon, CommandLineIcon, MagnifyingGlassIcon } from "@heroicons/react/24/outline";
 import { EllipsisVerticalIcon } from "@heroicons/react/20/solid";
 import { Menu, MenuButton, MenuItem, MenuItems } from "@headlessui/react";
@@ -595,6 +595,23 @@ const createdFilterOptions: { value: CreatedFilter; label: string }[] = [
   { value: "30d", label: "Last 30 days" },
 ];
 
+function parseCreatedFilter(raw: string | null): CreatedFilter {
+  switch (raw) {
+    case "today":
+    case "1h":
+    case "1d":
+    case "7d":
+    case "30d":
+      return raw;
+    default:
+      return "all";
+  }
+}
+
+function parseView(raw: string | null): ViewMode {
+  return raw === "list" ? "list" : "columns";
+}
+
 function createdCutoffMsFor(filter: CreatedFilter): number | null {
   const now = Date.now();
   switch (filter) {
@@ -796,7 +813,39 @@ function RunsLandingEmpty({
 }
 
 export default function Runs() {
-  const [includeArchived, setIncludeArchived] = useState(false);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const query = searchParams.get("search") ?? "";
+  const repoFilter = searchParams.get("repo") ?? "all";
+  const workflowFilter = searchParams.get("workflow") ?? "all";
+  const createdFilter = parseCreatedFilter(searchParams.get("created"));
+  const includeArchived = searchParams.get("archived") === "1";
+  const view = parseView(searchParams.get("view"));
+
+  const updateParam = useCallback(
+    (key: string, value: string | null) => {
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          if (value == null || value === "") {
+            next.delete(key);
+          } else {
+            next.set(key, value);
+          }
+          return next;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
+
+  const setQuery = (value: string) => updateParam("search", value || null);
+  const setRepoFilter = (value: string) => updateParam("repo", value === "all" ? null : value);
+  const setWorkflowFilter = (value: string) => updateParam("workflow", value === "all" ? null : value);
+  const setCreatedFilter = (value: CreatedFilter) => updateParam("created", value === "all" ? null : value);
+  const setIncludeArchived = (value: boolean) => updateParam("archived", value ? "1" : null);
+  const setView = (value: ViewMode) => updateParam("view", value === "columns" ? null : value);
+
   const boardRuns = useBoardsRuns(includeArchived);
   const authConfig = useAuthConfig();
   const systemInfo = useSystemInfo();
@@ -823,11 +872,6 @@ export default function Runs() {
       initialColumns.flatMap((col: Column) => col.items.map((item: RunItem) => String(item.workflow))),
     ),
   ].sort();
-  const [query, setQuery] = useState("");
-  const [repoFilter, setRepoFilter] = useState("all");
-  const [workflowFilter, setWorkflowFilter] = useState("all");
-  const [createdFilter, setCreatedFilter] = useState<CreatedFilter>("all");
-  const [view, setView] = useState<ViewMode>("columns");
   const [columns, setColumns] = useState(initialColumns);
   const lowerQuery = query.toLowerCase();
   useBoardEvents();
@@ -943,7 +987,7 @@ export default function Runs() {
           </div>
           <button
             type="button"
-            onClick={() => setIncludeArchived((v) => !v)}
+            onClick={() => setIncludeArchived(!includeArchived)}
             aria-pressed={includeArchived}
             title={includeArchived ? "Hide archived runs" : "Show archived runs"}
             className={`inline-flex items-center gap-1.5 rounded-md border border-line bg-panel/80 px-3 py-2 text-xs font-medium transition-colors ${includeArchived ? "text-teal-500" : "text-fg-muted hover:text-fg-3"}`}

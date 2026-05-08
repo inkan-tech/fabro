@@ -11,6 +11,7 @@ import {
 } from "@heroicons/react/24/solid";
 import {
   Bars3BottomLeftIcon,
+  BoltIcon,
   DocumentTextIcon,
   MapIcon,
   PaperClipIcon,
@@ -44,7 +45,7 @@ interface StageSidebarProps {
   stages: Stage[];
   runId: string;
   selectedStageId?: string;
-  activeLink?: "settings" | "source" | "logs" | "artifacts";
+  activeLink?: "settings" | "source" | "logs" | "artifacts" | "events";
 }
 
 export function StageSidebar({ stages, runId, selectedStageId, activeLink }: StageSidebarProps) {
@@ -119,19 +120,6 @@ export function StageSidebar({ stages, runId, selectedStageId, activeLink }: Sta
         <ul className="mt-2 space-y-0.5">
           <li>
             <Link
-              to={`/runs/${runId}/settings`}
-              className={`${linkBase} ${
-                activeLink === "settings"
-                  ? "bg-overlay text-fg"
-                  : "text-fg-3 hover:bg-overlay hover:text-fg"
-              }`}
-            >
-              <DocumentTextIcon className="size-4 shrink-0 text-fg-muted" />
-              Run Settings
-            </Link>
-          </li>
-          <li>
-            <Link
               to={`/runs/${runId}/source`}
               className={`${linkBase} ${
                 activeLink === "source"
@@ -158,6 +146,19 @@ export function StageSidebar({ stages, runId, selectedStageId, activeLink }: Sta
           </li>
           <li>
             <Link
+              to={`/runs/${runId}/events`}
+              className={`${linkBase} ${
+                activeLink === "events"
+                  ? "bg-overlay text-fg"
+                  : "text-fg-3 hover:bg-overlay hover:text-fg"
+              }`}
+            >
+              <BoltIcon className="size-4 shrink-0 text-fg-muted" />
+              Run Events
+            </Link>
+          </li>
+          <li>
+            <Link
               to={`/runs/${runId}/artifacts`}
               className={`${linkBase} ${
                 activeLink === "artifacts"
@@ -167,6 +168,19 @@ export function StageSidebar({ stages, runId, selectedStageId, activeLink }: Sta
             >
               <PaperClipIcon className="size-4 shrink-0 text-fg-muted" />
               Artifacts
+            </Link>
+          </li>
+          <li>
+            <Link
+              to={`/runs/${runId}/settings`}
+              className={`${linkBase} ${
+                activeLink === "settings"
+                  ? "bg-overlay text-fg"
+                  : "text-fg-3 hover:bg-overlay hover:text-fg"
+              }`}
+            >
+              <DocumentTextIcon className="size-4 shrink-0 text-fg-muted" />
+              Run Settings
             </Link>
           </li>
         </ul>

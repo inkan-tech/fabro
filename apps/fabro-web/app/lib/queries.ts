@@ -174,6 +174,16 @@ export function useRunStageEvents(id: string | undefined, stageId: string | unde
   );
 }
 
+export function useRunEventsList(id: string | undefined) {
+  return useSWR<EventEnvelope[]>(
+    id ? queryKeys.runs.events(id, 1000) : null,
+    () =>
+      fetchAllStageEvents(`run ${id} events`, (sinceSeq, limit) =>
+        apiData(() => runInternalsApi.listRunEvents(id!, sinceSeq, limit)),
+      ),
+  );
+}
+
 export function fetchRunCommandLog(
   id: string,
   stageId: string,

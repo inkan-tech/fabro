@@ -122,6 +122,30 @@ fn wait_for_output_signal(
     }
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "This sync integration helper polls a child process without a Tokio runtime."
+)]
+fn wait_for_child_exit(child: &mut std::process::Child, label: &str) -> std::process::ExitStatus {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Some(status) = child
+            .try_wait()
+            .unwrap_or_else(|err| panic!("{label} status should be readable: {err}"))
+        {
+            return status;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let status = child
+                .wait()
+                .unwrap_or_else(|err| panic!("{label} should exit after kill: {err}"));
+            panic!("{label} did not exit before timeout; killed with status {status}");
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
 #[test]
 fn attach_replays_completed_detached_run() {
     let context = test_context!();
@@ -167,6 +191,145 @@ fn attach_replays_completed_detached_run() {
         ✓ Report  [TIME]
         ✓ Exit  [TIME]
     ");
+}
+
+#[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "This sync integration test keeps a child stdin pipe open to reproduce attach waiting on input while the API answers the same question."
+)]
+fn attach_advances_when_pending_question_is_answered_elsewhere() {
+    let context = test_context!();
+    context.ensure_home_server_auth_methods();
+    let workflow = context.temp_dir.join("human-gate.fabro");
+    context.write_temp(
+        "human-gate.fabro",
+        r#"digraph HumanGate {
+  graph [goal="Wait for approval"]
+  start [shape=Mdiamond, label="Start"]
+  exit  [shape=Msquare, label="Exit"]
+  approve [shape=hexagon, label="Approve?"]
+  ship   [shape=parallelogram, script="echo shipped"]
+  start -> approve
+  approve -> ship [label="[A] Approve"]
+  ship -> exit
+}
+"#,
+    );
+
+    let run_output = context
+        .command()
+        .env("OPENAI_API_KEY", "test")
+        .args([
+            "run",
+            "--detach",
+            "--no-retro",
+            "--sandbox",
+            "local",
+            "--provider",
+            "openai",
+            workflow.to_str().unwrap(),
+        ])
+        .output()
+        .expect("detached run should execute");
+    assert!(
+        run_output.status.success(),
+        "detached run failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&run_output.stdout),
+        String::from_utf8_lossy(&run_output.stderr)
+    );
+    let run_id = output_stdout(&run_output).trim().to_string();
+    let cleanup_run_id = run_id.clone();
+    scopeguard::defer! {
+        let _ = context.command().args(["rm", "--force", &cleanup_run_id]).output();
+    }
+
+    let runtime = tokio::runtime::Runtime::new().expect("test runtime should build");
+    let (client, base_url) =
+        server_endpoint(&context.storage_dir).expect("server endpoint should exist");
+    let question = runtime.block_on(wait_for_server_question(&client, &base_url, &run_id));
+    let question_id = question["id"]
+        .as_str()
+        .expect("question id should be present")
+        .to_string();
+
+    let mut attach_cmd = std::process::Command::new(env!("CARGO_BIN_EXE_fabro"));
+    fabro_test::apply_test_isolation(&mut attach_cmd, &context.home_dir);
+    attach_cmd.current_dir(&context.temp_dir);
+    attach_cmd.args(["attach", &run_id]);
+    attach_cmd.stdin(Stdio::piped());
+    attach_cmd.stdout(Stdio::piped());
+    attach_cmd.stderr(Stdio::piped());
+    let mut child = attach_cmd.spawn().expect("attach should spawn");
+    let _stdin = child.stdin.take().expect("attach stdin should be piped");
+    let mut stdout = child.stdout.take().expect("attach stdout should be piped");
+    let stderr = child.stderr.take().expect("attach stderr should be piped");
+    let (signal_tx, signal_rx) = mpsc::channel();
+    let stderr_reader = std::thread::spawn(move || {
+        let mut reader = BufReader::new(stderr);
+        let mut stderr_bytes = Vec::new();
+        let mut line = Vec::new();
+
+        loop {
+            line.clear();
+            let read = reader
+                .read_until(b'\n', &mut line)
+                .expect("attach stderr should be readable");
+            if read == 0 {
+                break;
+            }
+            if line
+                .windows("Approve?".len())
+                .any(|window| window == "Approve?".as_bytes())
+            {
+                let _ = signal_tx.send(());
+            }
+            stderr_bytes.extend_from_slice(&line);
+        }
+
+        stderr_bytes
+    });
+    let stderr_reader = wait_for_output_signal(
+        &mut child,
+        &mut stdout,
+        stderr_reader,
+        &signal_rx,
+        "Approve?",
+    );
+
+    runtime.block_on(async {
+        let response = client
+            .post(format!(
+                "{base_url}/api/v1/runs/{run_id}/questions/{question_id}/answer"
+            ))
+            .json(&serde_json::json!({ "kind": "selected", "option_key": "A" }))
+            .send()
+            .await
+            .expect("answer submission should succeed");
+        assert_reqwest_status(
+            response,
+            fabro_http::StatusCode::NO_CONTENT,
+            format!("POST /api/v1/runs/{run_id}/questions/{question_id}/answer"),
+        )
+        .await;
+    });
+
+    let status = wait_for_child_exit(&mut child, "attach");
+    let mut stdout_bytes = Vec::new();
+    stdout
+        .read_to_end(&mut stdout_bytes)
+        .expect("attach stdout should be readable");
+    let output = Output {
+        status,
+        stdout: stdout_bytes,
+        stderr: stderr_reader.join().expect("stderr reader should join"),
+    };
+    assert!(
+        status.success(),
+        "attach failed after external answer:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 #[test]

@@ -1698,6 +1698,7 @@ dependencies = [
  "jsonwebtoken",
  "libc",
  "miette",
+ "nix 0.30.1",
  "object_store",
  "openssl",
  "paste",

@@ -15,15 +15,6 @@ let currentRunSummary: any = null;
 let currentQuestions: any[] = [];
 const mountedRenderers: TestRenderer.ReactTestRenderer[] = [];
 
-function noopMutation() {
-  return {
-    data:       undefined,
-    isMutating: false,
-    trigger:    mock(() => Promise.resolve()),
-    reset:      mock(() => undefined),
-  };
-}
-
 mock.module("../lib/queries", () => ({
   useRun: () => ({
     data:      currentRunSummary,
@@ -39,16 +30,6 @@ mock.module("../lib/queries", () => ({
     isValidating: false,
     mutate:       mock(() => Promise.resolve(null)),
   }),
-}));
-
-mock.module("../lib/mutations", () => ({
-  useArchiveRun:           () => noopMutation(),
-  useCancelRun:            () => noopMutation(),
-  useInterruptRun:         () => noopMutation(),
-  usePreviewRun:           () => noopMutation(),
-  useSteerRun:             () => noopMutation(),
-  useSubmitInterviewAnswer: () => noopMutation(),
-  useUnarchiveRun:         () => noopMutation(),
 }));
 
 mock.module("../lib/run-events", () => ({

@@ -4,7 +4,7 @@
 
 **Goal:** Make `StageProjection` the source of truth for current per-stage token usage so in-flight stages show running token counts on the billing page.
 
-**Architecture:** Store zeroable token counters directly on each `StageProjection`, plus optional model identity once model usage is known. Projection application updates those counters from usage-bearing events as they arrive, while terminal stage events remain authoritative and replace live counts when final billing is present. Billing rollups and server responses read from the projection rather than re-scanning raw events.
+**Architecture:** Store zeroable token counters directly on each `StageProjection`, plus optional `ModelRef` identity once model usage is known. Projection application updates those counters from usage-bearing events as they arrive, while terminal stage events replace live counts when they contain a later best-known billing snapshot. Billing rollups and server responses read from the projection rather than re-scanning raw events.
 
 **Tech Stack:** Rust workspace crates `fabro-model`, `fabro-types`, `fabro-store`, `fabro-workflow`, `fabro-server`; OpenAPI-driven `fabro-api`; React route tests in `apps/fabro-web`.
 
@@ -16,8 +16,8 @@
 - Modify `lib/crates/fabro-types/src/run_projection.rs` for the new projection fields and attempt reset behavior.
 - Modify `lib/crates/fabro-store/src/run_state.rs` so projection application updates live and terminal usage.
 - Modify `lib/crates/fabro-workflow/src/billing_rollup.rs` and billing-related server code to read `StageProjection.usage`.
-- Modify event conversion around `agent.message` to carry provider context and price live usage deltas when provider parsing succeeds.
-- Modify `docs/public/api-reference/fabro-api.yaml` to expose `StageProjection.usage` and `StageProjection.model_id`.
+- Modify event conversion around existing `agent.message` events to carry typed `ModelRef` billing identity instead of a string model id.
+- Modify `docs/public/api-reference/fabro-api.yaml` to expose `StageProjection.usage` and `StageProjection.model`.
 
 ## Task 1: Add `BilledTokenCounts` Aggregation Methods
 
@@ -89,19 +89,48 @@ Expected: all `fabro-model` billing tests pass.
 #[serde(default)]
 pub usage: BilledTokenCounts,
 #[serde(default, skip_serializing_if = "Option::is_none")]
-pub model_id: Option<String>,
+pub model: Option<ModelRef>,
 ```
 
 - [ ] Remove the `#[serde(skip)] pub usage: Option<BilledModelUsage>` field.
 
-- [ ] Initialize `usage` with `BilledTokenCounts::default()` and `model_id` with `None` in `StageProjection::new`.
+- [ ] Initialize `usage` with `BilledTokenCounts::default()` and `model` with `None` in `StageProjection::new`.
 
 - [ ] Confirm `StageProjection::begin_attempt` resets usage and model identity by relying on `*self = Self::new(self.first_event_seq)` before setting `started_at`, `handler`, and `state`.
 
 - [ ] Update the OpenAPI `StageProjection` schema:
   - add `usage: $ref: "#/components/schemas/BilledTokenCounts"`
-  - add `model_id: ["string", "null"]`
+  - add `model: oneOf [$ref: "#/components/schemas/BillingModelRef", null]`
   - include `usage` in `required`
+
+- [ ] Add an OpenAPI `BillingModelRef` schema for the existing Rust `fabro_types::ModelRef` shape:
+
+```yaml
+BillingModelRef:
+  description: Provider-qualified billing model identity used for cost estimates.
+  type: object
+  required:
+    - provider
+    - model_id
+  properties:
+    provider:
+      $ref: "#/components/schemas/Provider"
+    model_id:
+      type: string
+    speed:
+      oneOf:
+        - $ref: "#/components/schemas/BillingSpeed"
+        - type: "null"
+
+BillingSpeed:
+  description: Optional provider-specific model speed tier used for cost estimates.
+  type: string
+  enum:
+    - standard
+    - fast
+```
+
+- [ ] Do not reuse the existing OpenAPI `ModelRef` schema name here; that schema is a string parser type for run settings, while this field is the billing `fabro_types::ModelRef`.
 
 - [ ] Run:
 
@@ -124,9 +153,7 @@ EventBody::AgentMessage(props) => {
         return Ok(());
     };
     stage.usage.add_counts(&props.billing);
-    if !props.model.is_empty() {
-        stage.model_id = Some(props.model.clone());
-    }
+    stage.model = Some(props.model.clone());
 }
 ```
 
@@ -136,7 +163,7 @@ EventBody::AgentMessage(props) => {
 stage.response = Some(props.response.clone());
 if let Some(billing) = &props.billing {
     stage.usage.replace_with_billed_usage(billing);
-    stage.model_id = Some(billing.model_id().to_string());
+    stage.model = Some(billing.model().clone());
 }
 ```
 
@@ -145,13 +172,13 @@ if let Some(billing) = &props.billing {
 ```rust
 if let Some(billing) = &props.billing {
     stage.usage.replace_with_billed_usage(billing);
-    stage.model_id = Some(billing.model_id().to_string());
+    stage.model = Some(billing.model().clone());
 }
 ```
 
 - [ ] Do not clear nonzero live usage on terminal events that have `billing: None`; this preserves best-known live usage for events that do not include final pricing.
 
-- [ ] Update existing projection tests that assert `stage.usage.as_ref() == Some(...)` to assert flattened counters and `model_id`.
+- [ ] Update existing projection tests that assert `stage.usage.as_ref() == Some(...)` to assert flattened counters and `model`.
 
 - [ ] Add tests for live `agent.message` accumulation, terminal replacement, `stage.failed` replacement, and reset on a new `stage.started`.
 
@@ -163,40 +190,70 @@ cargo nextest run -p fabro-store run_state
 
 Expected: projection tests pass.
 
-## Task 4: Keep Live Agent Usage Cost-Aware Where Possible
+## Task 4: Carry Typed Model Identity on `agent.message`
 
 **Files:**
 - Modify: `lib/crates/fabro-agent/src/types.rs`
 - Modify: `lib/crates/fabro-agent/src/session.rs`
 - Modify: `lib/crates/fabro-workflow/src/event/convert.rs`
+- Modify: `lib/crates/fabro-types/src/run_event/agent.rs`
 
-- [ ] Add provider identity to `AgentEvent::AssistantMessage`:
+- [ ] Change the existing `AgentEvent::AssistantMessage` payload to carry billing `ModelRef` instead of a string model id:
 
 ```rust
 AssistantMessage {
     text: String,
-    provider: String,
-    model: String,
+    model: ModelRef,
     usage: TokenCounts,
     tool_call_count: usize,
 }
 ```
 
-- [ ] Emit `provider: self.provider_profile.provider().to_string()` from `Session` when emitting `AgentEvent::AssistantMessage`.
-
-- [ ] In workflow event conversion, price assistant message usage when provider parsing succeeds:
+- [ ] Build the `ModelRef` at the source in `Session` when emitting `AgentEvent::AssistantMessage`:
 
 ```rust
-let billing = provider.parse::<Provider>().ok().map_or_else(
-    || billed_token_counts_from_llm(usage),
-    |provider| {
-        let billed = billed_model_usage_from_llm(model, provider, None, usage);
-        BilledTokenCounts::from_billed_usage(std::slice::from_ref(&billed))
+let speed = self
+    .config
+    .speed
+    .as_deref()
+    .and_then(|value| value.parse::<Speed>().ok());
+let model = ModelRef {
+    provider: self.provider_profile.provider(),
+    model_id: if response.model.is_empty() {
+        self.provider_profile.model().to_string()
+    } else {
+        response.model.clone()
     },
-);
+    speed,
+};
 ```
 
-- [ ] Keep the fallback to flattened token counts when provider parsing fails, so live tokens are never lost.
+- [ ] Change `AgentMessageProps` to carry the same typed model identity:
+
+```rust
+pub struct AgentMessageProps {
+    pub text:            String,
+    pub model:           ModelRef,
+    pub billing:         BilledTokenCounts,
+    pub tool_call_count: usize,
+    pub visit:           u32,
+}
+```
+
+- [ ] In workflow event conversion, price assistant message usage directly from the typed model:
+
+```rust
+let requested_speed = model.speed.map(<&'static str>::from);
+let billed = billed_model_usage_from_llm(
+    &model.model_id,
+    model.provider,
+    requested_speed,
+    usage,
+);
+let billing = BilledTokenCounts::from_billed_usage(std::slice::from_ref(&billed));
+```
+
+- [ ] Set `AgentMessageProps.model` from event conversion with `model.clone()` for every `agent.message`.
 
 - [ ] Update affected unit tests that pattern-match `AgentEvent::AssistantMessage`.
 
@@ -219,6 +276,25 @@ Expected: agent event and event conversion tests pass.
 
 - [ ] Replace `stage.usage.is_some()` checks with `!stage.usage.is_zero()`.
 
+- [ ] Change rollup model fields from string ids to billing model refs:
+
+```rust
+pub struct ProjectionBillingStage {
+    pub node_id:     String,
+    pub billing:     BilledTokenCounts,
+    pub duration_ms: u64,
+    pub model:       Option<ModelRef>,
+}
+
+pub struct ProjectionBillingByModel {
+    pub model:   ModelRef,
+    pub stages:  i64,
+    pub billing: BilledTokenCounts,
+}
+```
+
+- [ ] Group by `HashMap<ModelRef, ProjectionBillingByModel>` and sort the final `by_model` vector by `(provider.to_string(), model_id, speed)` before returning it, so tests and API responses stay deterministic without reducing model identity to a string key.
+
 - [ ] Replace `if let Some(usage) = stage.usage.as_ref()` rollup logic with direct `BilledTokenCounts` aggregation:
 
 ```rust
@@ -226,11 +302,11 @@ if !stage.usage.is_zero() {
     billed_visit_count += 1;
     row.billing.add_counts(&stage.usage);
     totals.add_counts(&stage.usage);
-    if let Some(model_id) = &stage.model_id {
-        row.model_id = Some(model_id.clone());
-        let model_entry = by_model.entry(model_id.clone()).or_insert_with(|| {
+    if let Some(model) = &stage.model {
+        row.model = Some(model.clone());
+        let model_entry = by_model.entry(model.clone()).or_insert_with(|| {
             ProjectionBillingByModel {
-                model_id: model_id.clone(),
+                model: model.clone(),
                 stages: 0,
                 billing: BilledTokenCounts::default(),
             }
@@ -242,6 +318,8 @@ if !stage.usage.is_zero() {
 ```
 
 - [ ] Replace open-coded token count accumulation in server aggregate billing with `add_counts`.
+
+- [ ] Keep public `/runs/{id}/billing` response shape unchanged for this plan: server handlers convert `ModelRef` to the existing `ModelReference { id: model.model_id.clone() }` response object. Do not add a new public model identity response type in this task.
 
 - [ ] Keep runtime behavior unchanged: live runtime still comes from `started_at` and terminal runtime still comes from `duration_ms`.
 
@@ -298,7 +376,7 @@ cd apps/fabro-web && bun test run-billing
 ## Acceptance Criteria
 
 - In-flight stages included in `/runs/{id}/billing` can show nonzero token counts before `stage.completed`.
-- Completed stages still use terminal billing as authoritative when terminal billing exists.
+- Completed stages replace live billing with terminal billing when terminal billing exists.
 - Retry/new visit behavior resets per-visit usage cleanly.
 - Billing totals, by-model totals, and stage rows are derived from `StageProjection`.
-- Old projections without `usage` deserialize with zero counters.
+- Model identity uses the existing billing `ModelRef`; the plan does not introduce `StageModelIdentity` or store bare stage-level model-id strings.

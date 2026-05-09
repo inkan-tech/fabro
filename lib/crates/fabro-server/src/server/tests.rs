@@ -16,7 +16,7 @@ use fabro_interview::{
     AnswerValue, ControlInterviewer, Interviewer, Question, WorkerControlMessage,
 };
 use fabro_llm::types::{Message as LlmMessage, Request as LlmRequest};
-use fabro_model::Provider;
+use fabro_model::{ModelRef, Provider};
 use fabro_types::settings::ServerAuthMethod;
 use fabro_types::{
     AttrValue, AuthMethod, CommandTermination, FailureCategory, FailureDetail, Graph,
@@ -7690,9 +7690,13 @@ fn aggregate_billing_counts_projection_rollup_usage_visits() {
         },
         by_model:           vec![
             fabro_workflow::ProjectionBillingByModel {
-                model_id: "gpt-old".to_string(),
-                stages:   1,
-                billing:  BilledTokenCounts {
+                model:   ModelRef {
+                    provider: Provider::OpenAi,
+                    model_id: "gpt-old".to_string(),
+                    speed:    None,
+                },
+                stages:  1,
+                billing: BilledTokenCounts {
                     input_tokens:       100,
                     output_tokens:      10,
                     total_tokens:       110,
@@ -7703,9 +7707,13 @@ fn aggregate_billing_counts_projection_rollup_usage_visits() {
                 },
             },
             fabro_workflow::ProjectionBillingByModel {
-                model_id: "gpt-new".to_string(),
-                stages:   1,
-                billing:  BilledTokenCounts {
+                model:   ModelRef {
+                    provider: Provider::OpenAi,
+                    model_id: "gpt-new".to_string(),
+                    speed:    None,
+                },
+                stages:  1,
+                billing: BilledTokenCounts {
                     input_tokens:       200,
                     output_tokens:      20,
                     total_tokens:       220,

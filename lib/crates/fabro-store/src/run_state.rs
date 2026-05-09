@@ -319,6 +319,10 @@ impl RunProjectionReducer for RunProjection {
                     return Ok(());
                 };
                 stage.response = Some(props.response.clone());
+                if let Some(billing) = &props.billing {
+                    stage.usage.replace_with_billed_usage(billing);
+                    stage.model = Some(billing.model().clone());
+                }
             }
             EventBody::StageCompleted(props) => {
                 let response = props.response.clone();
@@ -332,7 +336,10 @@ impl RunProjectionReducer for RunProjection {
                 stage.response = response;
                 stage.completion = Some(completion);
                 stage.duration_ms = Some(props.duration_ms);
-                stage.usage.clone_from(&props.billing);
+                if let Some(billing) = &props.billing {
+                    stage.usage.replace_with_billed_usage(billing);
+                    stage.model = Some(billing.model().clone());
+                }
                 stage.state = Some(StageState::from(outcome.status));
             }
             EventBody::StageFailed(props) => {
@@ -350,8 +357,19 @@ impl RunProjectionReducer for RunProjection {
                     timestamp: ts,
                 });
                 stage.duration_ms = Some(props.duration_ms);
-                stage.usage.clone_from(&props.billing);
+                if let Some(billing) = &props.billing {
+                    stage.usage.replace_with_billed_usage(billing);
+                    stage.model = Some(billing.model().clone());
+                }
                 stage.state = Some(StageState::from(outcome));
+            }
+            EventBody::AgentMessage(props) => {
+                let Some(stage) = stage_at_stored_or_visit(self, stored, props.visit, event.seq)
+                else {
+                    return Ok(());
+                };
+                stage.usage.add_counts(&props.billing);
+                stage.model = Some(props.model.clone());
             }
             EventBody::AgentSessionActivated(props) => {
                 let Some(stage) = stage_at_stored_or_visit(self, stored, props.visit, event.seq)
@@ -737,15 +755,15 @@ mod tests {
     use chrono::Utc;
     use fabro_types::run_event::run::RunFailedProps;
     use fabro_types::run_event::{
-        AgentCliCancelledProps, AgentCliCompletedProps, AgentCliTimedOutProps,
+        AgentCliCancelledProps, AgentCliCompletedProps, AgentCliTimedOutProps, AgentMessageProps,
         AgentSessionActivatedProps, AgentSessionEndedProps, AgentSessionStartedProps,
         CheckpointCompletedProps, InterviewCompletedProps, InterviewOption, InterviewStartedProps,
         RunControlEffectProps, StageCompletedProps, StageFailedProps, StagePromptProps,
         StageRetryingProps, StageStartedProps,
     };
     use fabro_types::{
-        BilledModelUsage, BlockedReason, Checkpoint, CommandTermination, EventBody,
-        FailureCategory, FailureDetail, FailureReason, Outcome, QuestionType, RunBlobId,
+        BilledModelUsage, BilledTokenCounts, BlockedReason, Checkpoint, CommandTermination,
+        EventBody, FailureCategory, FailureDetail, FailureReason, Outcome, QuestionType, RunBlobId,
         RunControlAction, RunEvent, RunStatus, StageOutcome, StageState, SuccessReason,
         TerminalStatus, WorkflowSettings, first_event_seq, fixtures,
     };
@@ -804,6 +822,10 @@ mod tests {
 
     fn usage_json(usage: &BilledModelUsage) -> serde_json::Value {
         serde_json::to_value(usage).unwrap()
+    }
+
+    fn usage_counts(usage: &BilledModelUsage) -> BilledTokenCounts {
+        BilledTokenCounts::from_billed_usage(std::slice::from_ref(usage))
     }
 
     fn test_raw_event(
@@ -1222,7 +1244,8 @@ mod tests {
 
         let stage = state.stage(&StageId::new("build", 1)).unwrap();
         assert_eq!(stage.duration_ms, Some(789));
-        assert_eq!(stage.usage.as_ref(), Some(&usage));
+        assert_eq!(stage.usage, usage_counts(&usage));
+        assert_eq!(stage.model.as_ref(), Some(usage.model()));
     }
 
     #[test]
@@ -1263,7 +1286,8 @@ mod tests {
 
         let stage = state.stage(&stage_id).unwrap();
         assert_eq!(stage.duration_ms, Some(654));
-        assert_eq!(stage.usage.as_ref(), Some(&usage));
+        assert_eq!(stage.usage, usage_counts(&usage));
+        assert_eq!(stage.model.as_ref(), Some(usage.model()));
     }
 
     #[test]
@@ -1307,9 +1331,11 @@ mod tests {
         let first_stage = state.stage(&StageId::new("build", 1)).unwrap();
         let second_stage = state.stage(&StageId::new("build", 2)).unwrap();
         assert_eq!(first_stage.duration_ms, Some(111));
-        assert_eq!(first_stage.usage.as_ref(), Some(&first_usage));
+        assert_eq!(first_stage.usage, usage_counts(&first_usage));
+        assert_eq!(first_stage.model.as_ref(), Some(first_usage.model()));
         assert_eq!(second_stage.duration_ms, Some(222));
-        assert_eq!(second_stage.usage.as_ref(), Some(&second_usage));
+        assert_eq!(second_stage.usage, usage_counts(&second_usage));
+        assert_eq!(second_stage.model.as_ref(), Some(second_usage.model()));
     }
 
     #[test]
@@ -1351,7 +1377,8 @@ mod tests {
         );
         let stage = state.stage(&scoped_stage_id).unwrap();
         assert_eq!(stage.duration_ms, Some(333));
-        assert_eq!(stage.usage.as_ref(), Some(&usage));
+        assert_eq!(stage.usage, usage_counts(&usage));
+        assert_eq!(stage.model.as_ref(), Some(usage.model()));
         assert_eq!(stage.response.as_deref(), Some("done"));
     }
 
@@ -1384,7 +1411,8 @@ mod tests {
         );
         let stage = state.stage(&scoped_stage_id).unwrap();
         assert_eq!(stage.duration_ms, Some(444));
-        assert_eq!(stage.usage.as_ref(), Some(&usage));
+        assert_eq!(stage.usage, usage_counts(&usage));
+        assert_eq!(stage.model.as_ref(), Some(usage.model()));
         let completion = stage.completion.as_ref().unwrap();
         assert_eq!(completion.outcome, StageOutcome::Failed {
             retry_requested: true,
@@ -2329,6 +2357,28 @@ mod tests {
         .expect("billing fixture should deserialize")
     }
 
+    fn live_agent_message_props(billing: BilledTokenCounts) -> AgentMessageProps {
+        AgentMessageProps {
+            text: "assistant text".to_string(),
+            model: billed_usage().model().clone(),
+            billing,
+            tool_call_count: 0,
+            visit: 1,
+        }
+    }
+
+    fn live_counts(input_tokens: i64, output_tokens: i64) -> BilledTokenCounts {
+        BilledTokenCounts {
+            input_tokens,
+            output_tokens,
+            total_tokens: input_tokens + output_tokens,
+            reasoning_tokens: 0,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
+            total_usd_micros: None,
+        }
+    }
+
     #[test]
     fn stage_started_records_started_at_and_running_state() {
         let mut state = RunProjection::default();
@@ -2346,6 +2396,175 @@ mod tests {
         assert_eq!(stage.state, Some(StageState::Running));
         assert!(stage.started_at.is_some());
         assert_eq!(stage.effective_state(), StageState::Running);
+    }
+
+    #[test]
+    fn agent_message_accumulates_live_usage_on_stage_projection() {
+        let mut state = RunProjection::default();
+        let stage_id = StageId::new("build", 1);
+        let model = billed_usage().model().clone();
+
+        state
+            .apply_event(&test_stage_event(
+                1,
+                EventBody::StageStarted(started_props()),
+                stage_id.clone(),
+            ))
+            .unwrap();
+        state
+            .apply_event(&test_stage_event(
+                2,
+                EventBody::AgentMessage(live_agent_message_props(live_counts(10, 5))),
+                stage_id.clone(),
+            ))
+            .unwrap();
+        state
+            .apply_event(&test_stage_event(
+                3,
+                EventBody::AgentMessage(live_agent_message_props(live_counts(20, 7))),
+                stage_id.clone(),
+            ))
+            .unwrap();
+
+        let stage = state.stage(&stage_id).unwrap();
+        assert_eq!(stage.usage, live_counts(30, 12));
+        assert_eq!(stage.model, Some(model));
+    }
+
+    #[test]
+    fn stage_completed_replaces_live_usage_with_terminal_billing() {
+        let mut state = RunProjection::default();
+        let stage_id = StageId::new("build", 1);
+        let usage = billed_usage();
+
+        state
+            .apply_event(&test_stage_event(
+                1,
+                EventBody::StageStarted(started_props()),
+                stage_id.clone(),
+            ))
+            .unwrap();
+        state
+            .apply_event(&test_stage_event(
+                2,
+                EventBody::AgentMessage(live_agent_message_props(live_counts(100, 50))),
+                stage_id.clone(),
+            ))
+            .unwrap();
+        let mut props = completed_props(42, StageOutcome::Succeeded);
+        props.billing = Some(usage.clone());
+        state
+            .apply_event(&test_stage_event(
+                3,
+                EventBody::StageCompleted(props),
+                stage_id.clone(),
+            ))
+            .unwrap();
+
+        let stage = state.stage(&stage_id).unwrap();
+        assert_eq!(stage.usage, usage_counts(&usage));
+        assert_eq!(stage.model.as_ref(), Some(usage.model()));
+    }
+
+    #[test]
+    fn stage_completed_without_billing_preserves_live_usage() {
+        let mut state = RunProjection::default();
+        let stage_id = StageId::new("build", 1);
+        let model = billed_usage().model().clone();
+
+        state
+            .apply_event(&test_stage_event(
+                1,
+                EventBody::StageStarted(started_props()),
+                stage_id.clone(),
+            ))
+            .unwrap();
+        state
+            .apply_event(&test_stage_event(
+                2,
+                EventBody::AgentMessage(live_agent_message_props(live_counts(10, 5))),
+                stage_id.clone(),
+            ))
+            .unwrap();
+        state
+            .apply_event(&test_stage_event(
+                3,
+                EventBody::StageCompleted(completed_props(42, StageOutcome::Succeeded)),
+                stage_id.clone(),
+            ))
+            .unwrap();
+
+        let stage = state.stage(&stage_id).unwrap();
+        assert_eq!(stage.usage, live_counts(10, 5));
+        assert_eq!(stage.model, Some(model));
+    }
+
+    #[test]
+    fn stage_failed_replaces_live_usage_with_terminal_billing() {
+        let mut state = RunProjection::default();
+        let stage_id = StageId::new("build", 1);
+        let usage = billed_usage();
+
+        state
+            .apply_event(&test_stage_event(
+                1,
+                EventBody::StageStarted(started_props()),
+                stage_id.clone(),
+            ))
+            .unwrap();
+        state
+            .apply_event(&test_stage_event(
+                2,
+                EventBody::AgentMessage(live_agent_message_props(live_counts(100, 50))),
+                stage_id.clone(),
+            ))
+            .unwrap();
+        let mut props = failed_props(42, false);
+        props.billing = Some(usage.clone());
+        state
+            .apply_event(&test_stage_event(
+                3,
+                EventBody::StageFailed(props),
+                stage_id.clone(),
+            ))
+            .unwrap();
+
+        let stage = state.stage(&stage_id).unwrap();
+        assert_eq!(stage.usage, usage_counts(&usage));
+        assert_eq!(stage.model.as_ref(), Some(usage.model()));
+    }
+
+    #[test]
+    fn stage_started_resets_live_usage_for_new_attempt() {
+        let mut state = RunProjection::default();
+        let stage_id = StageId::new("build", 1);
+
+        state
+            .apply_event(&test_stage_event(
+                1,
+                EventBody::StageStarted(started_props()),
+                stage_id.clone(),
+            ))
+            .unwrap();
+        state
+            .apply_event(&test_stage_event(
+                2,
+                EventBody::AgentMessage(live_agent_message_props(live_counts(10, 5))),
+                stage_id.clone(),
+            ))
+            .unwrap();
+        state
+            .apply_event(&test_stage_event(
+                3,
+                EventBody::StageStarted(started_props()),
+                stage_id.clone(),
+            ))
+            .unwrap();
+
+        let stage = state.stage(&stage_id).unwrap();
+        assert!(stage.usage.is_zero());
+        assert_eq!(stage.model, None);
+        assert_eq!(stage.state, Some(StageState::Running));
     }
 
     #[test]
@@ -2373,7 +2592,8 @@ mod tests {
 
         let stage = state.stage(&stage_id).unwrap();
         assert_eq!(stage.duration_ms, Some(42));
-        assert_eq!(stage.usage.as_ref(), Some(&usage));
+        assert_eq!(stage.usage, usage_counts(&usage));
+        assert_eq!(stage.model.as_ref(), Some(usage.model()));
         assert_eq!(stage.state, Some(StageState::Succeeded));
         assert_eq!(stage.effective_state(), StageState::Succeeded);
     }

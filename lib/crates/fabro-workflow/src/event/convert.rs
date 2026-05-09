@@ -4,24 +4,12 @@ use ::fabro_types::{
 };
 use chrono::Utc;
 use fabro_agent::{AgentEvent, SandboxEvent};
-use fabro_llm::types::TokenCounts as LlmTokenCounts;
 use uuid::Uuid;
 
 use super::Event;
 use super::stored_fields::stored_event_fields;
+use crate::outcome::billed_model_usage_from_llm;
 use crate::stage_scope::StageScope;
-
-fn billed_token_counts_from_llm(usage: &LlmTokenCounts) -> BilledTokenCounts {
-    BilledTokenCounts {
-        input_tokens:       usage.input_tokens,
-        output_tokens:      usage.output_tokens,
-        total_tokens:       usage.total_tokens(),
-        reasoning_tokens:   usage.reasoning_tokens,
-        cache_read_tokens:  usage.cache_read_tokens,
-        cache_write_tokens: usage.cache_write_tokens,
-        total_usd_micros:   None,
-    }
-}
 
 fn stage_status_from_string(status: &str) -> StageOutcome {
     status.parse().unwrap_or_else(|_| {
@@ -562,13 +550,23 @@ fn event_body_from_event(event: &Event) -> EventBody {
                 model,
                 usage,
                 tool_call_count,
-            } => EventBody::AgentMessage(fabro_types::AgentMessageProps {
-                text:            text.clone(),
-                model:           model.clone(),
-                billing:         billed_token_counts_from_llm(usage),
-                tool_call_count: *tool_call_count,
-                visit:           *visit,
-            }),
+            } => {
+                let requested_speed = model.speed.map(<&'static str>::from);
+                let billed = billed_model_usage_from_llm(
+                    &model.model_id,
+                    model.provider,
+                    requested_speed,
+                    usage,
+                );
+                let billing = BilledTokenCounts::from_billed_usage(std::slice::from_ref(&billed));
+                EventBody::AgentMessage(fabro_types::AgentMessageProps {
+                    text: text.clone(),
+                    model: model.clone(),
+                    billing,
+                    tool_call_count: *tool_call_count,
+                    visit: *visit,
+                })
+            }
             AgentEvent::ToolCallStarted {
                 tool_name,
                 tool_call_id,
@@ -1276,6 +1274,7 @@ mod tests {
     use chrono::Utc;
     use fabro_agent::{AgentEvent, SandboxEvent};
     use fabro_llm::types::TokenCounts as LlmTokenCounts;
+    use fabro_model::{ModelRef, Provider};
 
     use super::*;
     use crate::error::Error;
@@ -1949,7 +1948,11 @@ mod tests {
             visit:             1,
             event:             AgentEvent::AssistantMessage {
                 text:            "ok".to_string(),
-                model:           "claude-sonnet".to_string(),
+                model:           ModelRef {
+                    provider: Provider::Anthropic,
+                    model_id: "claude-sonnet".to_string(),
+                    speed:    None,
+                },
                 usage:           LlmTokenCounts::default(),
                 tool_call_count: 0,
             },

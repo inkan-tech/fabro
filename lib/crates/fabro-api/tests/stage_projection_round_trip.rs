@@ -30,6 +30,14 @@ fn stage_projection_round_trips_representative_json() {
         "termination": "exited",
         "started_at": "2026-04-29T12:34:00Z",
         "duration_ms": 56000,
+        "usage": {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "reasoning_tokens": 0,
+            "cache_read_tokens": 0,
+            "cache_write_tokens": 0
+        },
         "state": "succeeded"
     });
 

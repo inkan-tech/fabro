@@ -283,7 +283,7 @@ fn agent_actor_for_event(
         AgentEvent::AssistantMessage { model, .. } => Some(Principal::Agent {
             session_id:        session_id.map(str::to_string),
             parent_session_id: parent_session_id.map(str::to_string),
-            model:             Some(model.clone()),
+            model:             Some(model.model_id.clone()),
         }),
         AgentEvent::ToolCallStarted { .. }
         | AgentEvent::ToolCallOutputDelta { .. }

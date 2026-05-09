@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::BilledTokenCounts;
+use crate::ModelRef;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AgentSessionStartedProps {
@@ -55,7 +56,7 @@ pub struct AgentInputProps {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AgentMessageProps {
     pub text:            String,
-    pub model:           String,
+    pub model:           ModelRef,
     pub billing:         BilledTokenCounts,
     pub tool_call_count: usize,
     pub visit:           u32,

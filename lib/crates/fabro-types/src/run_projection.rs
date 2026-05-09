@@ -5,8 +5,8 @@ use std::num::NonZeroU32;
 use chrono::{DateTime, Utc};
 
 use crate::{
-    BilledModelUsage, Checkpoint, Conclusion, DiffSummary, InterviewQuestionRecord,
-    InvalidTransition, PullRequestRecord, RunControlAction, RunId, RunSpec, RunStatus,
+    BilledTokenCounts, Checkpoint, Conclusion, DiffSummary, InterviewQuestionRecord,
+    InvalidTransition, ModelRef, PullRequestRecord, RunControlAction, RunId, RunSpec, RunStatus,
     SandboxRecord, StageCompletion, StageHandler, StageId, StageState, StartRecord,
 };
 
@@ -65,11 +65,10 @@ pub struct StageProjection {
     pub handler:           Option<StageHandler>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub duration_ms:       Option<u64>,
-    /// Server-internal billing usage for the latest attempt; not part of the
-    /// wire contract because `BilledModelUsage` is not modeled in OpenAPI.
-    /// Read only in-process by the billing handler.
-    #[serde(skip)]
-    pub usage:             Option<BilledModelUsage>,
+    #[serde(default)]
+    pub usage:             BilledTokenCounts,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model:             Option<ModelRef>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub state:             Option<StageState>,
 }
@@ -90,7 +89,8 @@ impl StageProjection {
             response: None,
             completion: None,
             duration_ms: None,
-            usage: None,
+            usage: BilledTokenCounts::default(),
+            model: None,
             provider_used: None,
             diff: None,
             script_invocation: None,

@@ -86,7 +86,7 @@ async fn get_run_billing(
         .map(|model| BillingByModel {
             billing: model.billing.clone(),
             model:   ModelReference {
-                id: model.model_id.clone(),
+                id: model.model.model_id.clone(),
             },
             stages:  model.stages,
         })
@@ -108,8 +108,10 @@ async fn get_run_billing(
                     .map(|stage| stage.billing.clone())
                     .unwrap_or_default(),
                 model:        rollup_stage
-                    .and_then(|stage| stage.model_id.as_ref())
-                    .map(|id| ModelReference { id: id.clone() }),
+                    .and_then(|stage| stage.model.as_ref())
+                    .map(|model| ModelReference {
+                        id: model.model_id.clone(),
+                    }),
                 runtime_secs: row.runtime_secs,
                 stage:        BillingStageRef {
                     id:   row.node_id.clone(),
@@ -191,7 +193,7 @@ fn billing_runtime_secs(stage: &StageProjection, now: DateTime<Utc>) -> Option<f
 fn stage_has_billing_row(stage: &StageProjection) -> bool {
     stage.completion.is_some()
         || stage.duration_ms.is_some()
-        || stage.usage.is_some()
+        || !stage.usage.is_zero()
         || stage.started_at.is_some()
         || stage.state.is_some()
 }

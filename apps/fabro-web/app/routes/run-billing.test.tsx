@@ -167,7 +167,7 @@ describe("RunBilling", () => {
     expect(text).toContain("Stages will appear as soon as the run starts executing.");
   });
 
-  test("renders an in-flight row with live runtime and includes its elapsed time in the footer", () => {
+  test("renders an in-flight row with live billing and includes its elapsed time in the footer", () => {
     const originalNow = Date.now;
     // Pin "now" to 30s after the in-flight row started.
     const startedAt = "2026-04-29T12:00:00.000Z";
@@ -180,19 +180,39 @@ describe("RunBilling", () => {
           stages: [
             {
               stage: { id: "in-flight", name: "in-flight" },
-              model: null,
-              // Server reports 0 runtime / no billing; the row is still being executed.
-              billing: zeroBilling(),
+              model: { id: "claude-opus-4-6" },
+              billing: zeroBilling({
+                input_tokens: 1200,
+                output_tokens: 300,
+                total_tokens: 1500,
+                total_usd_micros: 240000,
+              }),
               runtime_secs: 0,
               started_at: startedAt,
               state: "running",
             },
           ],
-          // Server total is 0 because the in-flight row hasn't been finalized.
           totals: {
             runtime_secs: 0,
-            ...zeroBilling(),
+            ...zeroBilling({
+              input_tokens: 1200,
+              output_tokens: 300,
+              total_tokens: 1500,
+              total_usd_micros: 240000,
+            }),
           },
+          by_model: [
+            {
+              model: { id: "claude-opus-4-6" },
+              stages: 1,
+              billing: zeroBilling({
+                input_tokens: 1200,
+                output_tokens: 300,
+                total_tokens: 1500,
+                total_usd_micros: 240000,
+              }),
+            },
+          ],
         }),
       );
 
@@ -201,6 +221,11 @@ describe("RunBilling", () => {
       // first stage starts.
       expect(text).not.toContain("No stages yet");
       expect(text).toContain("in-flight");
+      expect(text).toContain("claude-opus-4-6");
+      expect(text).toContain("1.2k");
+      expect(text).toContain("0.3k");
+      expect(text).toContain("$0.24");
+      expect(text).toContain("By model");
 
       // Both the row's runtime cell and the footer total should reflect
       // ~30s elapsed since started_at.

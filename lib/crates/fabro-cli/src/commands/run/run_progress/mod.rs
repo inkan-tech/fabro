@@ -471,7 +471,7 @@ mod tests {
     use chrono::{DateTime, Utc};
     use fabro_agent::{AgentEvent, SandboxEvent};
     use fabro_llm::types::TokenCounts;
-    use fabro_model::Provider;
+    use fabro_model::{ModelRef, Provider};
     use fabro_types::{
         MetadataSnapshotFailureKind, MetadataSnapshotPhase, ParallelBranchId, StageId, fixtures,
     };
@@ -550,7 +550,11 @@ mod tests {
     fn assistant_message(stage: &str, model: &str) -> Event {
         agent_event(stage, AgentEvent::AssistantMessage {
             text:            "done".into(),
-            model:           model.into(),
+            model:           ModelRef {
+                provider: Provider::OpenAi,
+                model_id: model.into(),
+                speed:    None,
+            },
             usage:           TokenCounts::default(),
             tool_call_count: 0,
         })

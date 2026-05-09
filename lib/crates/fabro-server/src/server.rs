@@ -602,18 +602,6 @@ pub(crate) struct ResolvedAppStateSettings {
     pub(crate) manifest_run_settings: std::result::Result<RunNamespace, SharedError>,
 }
 
-fn accumulate_billed_token_counts(target: &mut BilledTokenCounts, source: &BilledTokenCounts) {
-    target.input_tokens += source.input_tokens;
-    target.output_tokens += source.output_tokens;
-    target.reasoning_tokens += source.reasoning_tokens;
-    target.cache_read_tokens += source.cache_read_tokens;
-    target.cache_write_tokens += source.cache_write_tokens;
-    target.total_tokens += source.total_tokens;
-    if let Some(value) = source.total_usd_micros {
-        *target.total_usd_micros.get_or_insert(0) += value;
-    }
-}
-
 fn accumulate_billing_rollup(
     accumulator: &mut BillingAccumulator,
     rollup: &fabro_workflow::ProjectionBillingRollup,
@@ -623,10 +611,10 @@ fn accumulate_billing_rollup(
     for model in &rollup.by_model {
         let entry = accumulator
             .by_model
-            .entry(model.model_id.clone())
+            .entry(model.model.model_id.clone())
             .or_default();
         entry.stages += model.stages;
-        accumulate_billed_token_counts(&mut entry.billing, &model.billing);
+        entry.billing.add_counts(&model.billing);
     }
 }
 

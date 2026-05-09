@@ -5,8 +5,8 @@ use fabro_store::{RunProjection, SerializableProjection, StageId};
 use fabro_types::graph::Graph;
 use fabro_types::run::RunSpec;
 use fabro_types::{
-    BilledModelUsage, Checkpoint, RunStatus, SandboxRecord, StageCompletion, StageOutcome,
-    StartRecord, TerminalStatus, WorkflowSettings, first_event_seq, fixtures,
+    BilledModelUsage, BilledTokenCounts, Checkpoint, RunStatus, SandboxRecord, StageCompletion,
+    StageOutcome, StartRecord, TerminalStatus, WorkflowSettings, first_event_seq, fixtures,
 };
 use serde_json::json;
 
@@ -116,14 +116,21 @@ fn serializable_projection_round_trips_and_trims_bulky_node_fields() {
     stage.script_timing = Some(json!({ "duration_ms": 10 }));
     stage.parallel_results = Some(json!([{ "stage": "fanout@1" }]));
     stage.duration_ms = Some(1234);
-    stage.usage = Some(sample_usage());
+    let usage = sample_usage();
+    let usage_counts = BilledTokenCounts::from_billed_usage(std::slice::from_ref(&usage));
+    stage.usage = usage_counts.clone();
+    stage.model = Some(usage.model().clone());
     stage.output = Some("output".to_string());
 
     let serialized = serde_json::to_value(SerializableProjection(&projection))
         .expect("projection should serialize");
-    assert!(
-        serialized["stages"]["build@2"].get("usage").is_none(),
-        "stage usage is server-internal and should not be serialized"
+    assert_eq!(
+        serialized["stages"]["build@2"]["usage"]["input_tokens"],
+        json!(123)
+    );
+    assert_eq!(
+        serialized["stages"]["build@2"]["model"]["model_id"],
+        json!("gpt-5.2")
     );
     let round_tripped: RunProjection =
         serde_json::from_value(serialized).expect("serialized projection should deserialize");
@@ -164,7 +171,8 @@ fn serializable_projection_round_trips_and_trims_bulky_node_fields() {
         Some(json!([{ "stage": "fanout@1" }]))
     );
     assert_eq!(node.duration_ms, Some(1234));
-    assert_eq!(node.usage, None);
+    assert_eq!(node.usage, usage_counts);
+    assert_eq!(node.model.as_ref(), Some(usage.model()));
 }
 
 #[test]

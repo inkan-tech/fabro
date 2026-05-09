@@ -1,20 +1,20 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 
-use fabro_types::{BilledModelUsage, BilledTokenCounts, RunProjection};
+use fabro_types::{BilledTokenCounts, ModelRef, RunProjection};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProjectionBillingStage {
     pub node_id:     String,
     pub billing:     BilledTokenCounts,
     pub duration_ms: u64,
-    pub model_id:    Option<String>,
+    pub model:       Option<ModelRef>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectionBillingByModel {
-    pub model_id: String,
-    pub stages:   i64,
-    pub billing:  BilledTokenCounts,
+    pub model:   ModelRef,
+    pub stages:  i64,
+    pub billing: BilledTokenCounts,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -37,7 +37,7 @@ impl ProjectionBillingRollup {
 pub fn billing_rollup_from_projection(projection: &RunProjection) -> ProjectionBillingRollup {
     let mut stage_indices = HashMap::<String, usize>::new();
     let mut stages = Vec::<ProjectionBillingStage>::new();
-    let mut by_model = BTreeMap::<String, ProjectionBillingByModel>::new();
+    let mut by_model = HashMap::<ModelRef, ProjectionBillingByModel>::new();
     let mut totals = BilledTokenCounts::default();
     let mut runtime_ms = 0_u64;
     let mut billed_visit_count = 0_usize;
@@ -46,7 +46,7 @@ pub fn billing_rollup_from_projection(projection: &RunProjection) -> ProjectionB
         if is_boundary_stage(projection, stage_id.node_id()) {
             continue;
         }
-        if stage.completion.is_none() && stage.duration_ms.is_none() && stage.usage.is_none() {
+        if stage.completion.is_none() && stage.duration_ms.is_none() && stage.usage.is_zero() {
             continue;
         }
 
@@ -57,7 +57,7 @@ pub fn billing_rollup_from_projection(projection: &RunProjection) -> ProjectionB
                 node_id:     node_id.to_string(),
                 billing:     BilledTokenCounts::default(),
                 duration_ms: 0,
-                model_id:    None,
+                model:       None,
             });
             index
         });
@@ -68,30 +68,46 @@ pub fn billing_rollup_from_projection(projection: &RunProjection) -> ProjectionB
             runtime_ms = runtime_ms.saturating_add(duration_ms);
         }
 
-        if let Some(usage) = stage.usage.as_ref() {
+        if !stage.usage.is_zero() {
             billed_visit_count += 1;
-            row.model_id = Some(usage.model_id().to_string());
-            accumulate_usage(&mut row.billing, usage);
-            accumulate_usage(&mut totals, usage);
+            row.billing.add_counts(&stage.usage);
+            totals.add_counts(&stage.usage);
 
-            let model_id = usage.model_id().to_string();
-            let model_entry =
-                by_model
-                    .entry(model_id.clone())
-                    .or_insert_with(|| ProjectionBillingByModel {
-                        model_id,
-                        stages: 0,
-                        billing: BilledTokenCounts::default(),
-                    });
-            model_entry.stages += 1;
-            accumulate_usage(&mut model_entry.billing, usage);
+            if let Some(model) = &stage.model {
+                row.model = Some(model.clone());
+                let model_entry =
+                    by_model
+                        .entry(model.clone())
+                        .or_insert_with(|| ProjectionBillingByModel {
+                            model:   model.clone(),
+                            stages:  0,
+                            billing: BilledTokenCounts::default(),
+                        });
+                model_entry.stages += 1;
+                model_entry.billing.add_counts(&stage.usage);
+            }
         }
     }
+
+    let mut by_model = by_model.into_values().collect::<Vec<_>>();
+    by_model.sort_by(|left, right| {
+        let left_provider = left.model.provider.to_string();
+        let right_provider = right.model.provider.to_string();
+        left_provider
+            .cmp(&right_provider)
+            .then_with(|| left.model.model_id.cmp(&right.model.model_id))
+            .then_with(|| {
+                left.model
+                    .speed
+                    .map(<&'static str>::from)
+                    .cmp(&right.model.speed.map(<&'static str>::from))
+            })
+    });
 
     ProjectionBillingRollup {
         stages,
         totals,
-        by_model: by_model.into_values().collect(),
+        by_model,
         runtime_ms,
         billed_visit_count,
     }
@@ -104,26 +120,13 @@ fn is_boundary_stage(projection: &RunProjection, node_id: &str) -> bool {
         .is_some_and(|node| matches!(node.handler_type(), Some("start" | "exit")))
 }
 
-fn accumulate_usage(counts: &mut BilledTokenCounts, usage: &BilledModelUsage) {
-    let tokens = usage.tokens();
-    counts.input_tokens += tokens.input_tokens;
-    counts.output_tokens += tokens.output_tokens;
-    counts.reasoning_tokens += tokens.reasoning_tokens;
-    counts.cache_read_tokens += tokens.cache_read_tokens;
-    counts.cache_write_tokens += tokens.cache_write_tokens;
-    counts.total_tokens += tokens.total_tokens();
-    if let Some(value) = usage.total_usd_micros {
-        *counts.total_usd_micros.get_or_insert(0) += value;
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
 
     use fabro_types::{
-        AttrValue, BilledModelUsage, Graph, Node, RunProjection, RunSpec, StageCompletion,
-        StageOutcome, WorkflowSettings, first_event_seq, fixtures,
+        AttrValue, BilledModelUsage, BilledTokenCounts, Graph, Node, RunProjection, RunSpec,
+        StageCompletion, StageOutcome, WorkflowSettings, first_event_seq, fixtures,
     };
     use serde_json::json;
 
@@ -158,7 +161,8 @@ mod tests {
         let success_usage = test_usage("gpt-new", 200, 20);
         let first = projection.stage_entry("verify", 1, first_event_seq(1));
         first.duration_ms = Some(1200);
-        first.usage = Some(failed_usage);
+        first.usage = BilledTokenCounts::from_billed_usage(std::slice::from_ref(&failed_usage));
+        first.model = Some(failed_usage.model().clone());
         first.completion = Some(StageCompletion {
             outcome:        StageOutcome::Failed {
                 retry_requested: true,
@@ -169,7 +173,8 @@ mod tests {
         });
         let second = projection.stage_entry("verify", 2, first_event_seq(2));
         second.duration_ms = Some(800);
-        second.usage = Some(success_usage);
+        second.usage = BilledTokenCounts::from_billed_usage(std::slice::from_ref(&success_usage));
+        second.model = Some(success_usage.model().clone());
         second.completion = Some(StageCompletion {
             outcome:        StageOutcome::Succeeded,
             notes:          None,
@@ -181,7 +186,13 @@ mod tests {
 
         assert_eq!(rollup.stages.len(), 1);
         assert_eq!(rollup.stages[0].node_id, "verify");
-        assert_eq!(rollup.stages[0].model_id.as_deref(), Some("gpt-new"));
+        assert_eq!(
+            rollup.stages[0]
+                .model
+                .as_ref()
+                .map(|model| model.model_id.as_str()),
+            Some("gpt-new")
+        );
         assert_eq!(rollup.stages[0].duration_ms, 2000);
         assert_eq!(rollup.stages[0].billing.input_tokens, 300);
         assert_eq!(rollup.stages[0].billing.output_tokens, 30);
@@ -194,10 +205,10 @@ mod tests {
         assert_eq!(rollup.billed_visit_count, 2);
 
         assert_eq!(rollup.by_model.len(), 2);
-        assert_eq!(rollup.by_model[0].model_id, "gpt-new");
+        assert_eq!(rollup.by_model[0].model.model_id, "gpt-new");
         assert_eq!(rollup.by_model[0].stages, 1);
         assert_eq!(rollup.by_model[0].billing.input_tokens, 200);
-        assert_eq!(rollup.by_model[1].model_id, "gpt-old");
+        assert_eq!(rollup.by_model[1].model.model_id, "gpt-old");
         assert_eq!(rollup.by_model[1].stages, 1);
         assert_eq!(rollup.by_model[1].billing.input_tokens, 100);
     }
@@ -219,7 +230,7 @@ mod tests {
         assert_eq!(rollup.stages.len(), 1);
         assert_eq!(rollup.stages[0].node_id, "build");
         assert_eq!(rollup.stages[0].duration_ms, 25);
-        assert!(rollup.stages[0].model_id.is_none());
+        assert!(rollup.stages[0].model.is_none());
         assert_eq!(rollup.stages[0].billing.input_tokens, 0);
         assert_eq!(rollup.runtime_ms, 25);
         assert!(rollup.by_model.is_empty());

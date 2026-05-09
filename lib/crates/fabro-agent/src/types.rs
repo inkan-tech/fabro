@@ -2,6 +2,7 @@ use std::time::SystemTime;
 
 use fabro_llm::Error as LlmError;
 use fabro_llm::types::{ContentPart, ThinkingData, TokenCounts, ToolCall, ToolResult};
+use fabro_model::ModelRef;
 use serde::{Deserialize, Serialize};
 
 use crate::error::Error;
@@ -117,7 +118,7 @@ pub enum AgentEvent {
     },
     AssistantMessage {
         text:            String,
-        model:           String,
+        model:           ModelRef,
         usage:           TokenCounts,
         tool_call_count: usize,
     },
@@ -257,7 +258,8 @@ impl AgentEvent {
             } => {
                 info!(
                     session_id,
-                    model,
+                    provider = %model.provider,
+                    model = model.model_id.as_str(),
                     input_tokens = usage.input_tokens,
                     output_tokens = usage.output_tokens,
                     tool_call_count,
@@ -427,6 +429,8 @@ pub struct SessionEvent {
 
 #[cfg(test)]
 mod tests {
+    use fabro_model::Provider;
+
     use super::*;
 
     #[test]
@@ -666,7 +670,11 @@ mod tests {
         };
         let event = AgentEvent::AssistantMessage {
             text:            "Hello".into(),
-            model:           "test-model".into(),
+            model:           ModelRef {
+                provider: Provider::OpenAi,
+                model_id: "test-model".into(),
+                speed:    None,
+            },
             usage:           usage.clone(),
             tool_call_count: 2,
         };

@@ -65,7 +65,15 @@ fn run_projection_round_trips_populated_projection() {
                 "script_invocation": null,
                 "script_timing": null,
                 "parallel_results": null,
-                "output": "done"
+                "output": "done",
+                "usage": {
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "total_tokens": 0,
+                    "reasoning_tokens": 0,
+                    "cache_read_tokens": 0,
+                    "cache_write_tokens": 0
+                }
             }
         }
     });

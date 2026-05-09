@@ -13,7 +13,7 @@ use fabro_llm::types::{
 use fabro_llm::{Error as LlmError, retry};
 use fabro_mcp::config::{McpServerSettings, McpTransport};
 use fabro_mcp::connection_manager::McpConnectionManager;
-use fabro_model::Provider;
+use fabro_model::{ModelRef, Provider, Speed};
 use fabro_types::Principal;
 use futures::StreamExt;
 use tokio::sync::{Mutex as AsyncMutex, Notify, broadcast};
@@ -1319,11 +1319,25 @@ impl Session {
             });
 
             // Emit AssistantMessage with enriched data from the response
+            let speed = self
+                .config
+                .speed
+                .as_deref()
+                .and_then(|value| value.parse::<Speed>().ok());
+            let model = ModelRef {
+                provider: self.provider_profile.provider(),
+                model_id: if response.model.is_empty() {
+                    self.provider_profile.model().to_string()
+                } else {
+                    response.model.clone()
+                },
+                speed,
+            };
             self.event_emitter
                 .emit(self.id.clone(), AgentEvent::AssistantMessage {
-                    text:            text.clone(),
-                    model:           response.model.clone(),
-                    usage:           response.usage.clone(),
+                    text: text.clone(),
+                    model,
+                    usage: response.usage.clone(),
                     tool_call_count: tool_calls.len(),
                 });
 

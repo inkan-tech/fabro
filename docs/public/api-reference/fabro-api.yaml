@@ -6008,6 +6008,7 @@ components:
       type: object
       required:
         - first_event_seq
+        - usage
       properties:
         first_event_seq:
           type: integer
@@ -6057,6 +6058,12 @@ components:
           format: uint64
           minimum: 0
           description: Wall-clock duration of the stage's latest terminal attempt, if known.
+        usage:
+          $ref: "#/components/schemas/BilledTokenCounts"
+        model:
+          oneOf:
+            - $ref: "#/components/schemas/BillingModelRef"
+            - type: "null"
         state:
           oneOf:
             - $ref: "#/components/schemas/StageState"
@@ -6547,6 +6554,29 @@ components:
           format: int64
           description: Billed USD amount in micros.
           example: 720000
+
+    BillingModelRef:
+      description: Provider-qualified billing model identity used for cost estimates.
+      type: object
+      required:
+        - provider
+        - model_id
+      properties:
+        provider:
+          $ref: "#/components/schemas/Provider"
+        model_id:
+          type: string
+        speed:
+          oneOf:
+            - $ref: "#/components/schemas/BillingSpeed"
+            - type: "null"
+
+    BillingSpeed:
+      description: Optional provider-specific model speed tier used for cost estimates.
+      type: string
+      enum:
+        - standard
+        - fast
 
     CodeLocation:
       description: A file and line location in the codebase.

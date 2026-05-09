@@ -647,8 +647,8 @@ mod tests {
     use fabro_store::{Database, EventEnvelope, RunDatabase, RunProjection};
     use fabro_types::run_event::{MetadataSnapshotFailureKind, MetadataSnapshotPhase};
     use fabro_types::{
-        BilledModelUsage, EventBody, RunBlobId, RunEvent, RunId, StageCompletion, WorkflowSettings,
-        first_event_seq, fixtures,
+        BilledModelUsage, BilledTokenCounts, EventBody, RunBlobId, RunEvent, RunId,
+        StageCompletion, WorkflowSettings, first_event_seq, fixtures,
     };
     use object_store::memory::InMemory;
 
@@ -934,7 +934,8 @@ mod tests {
         let success_usage = test_usage("gpt-new", 200, 20);
         let failed = projection.stage_entry("verify", 1, first_event_seq(1));
         failed.duration_ms = Some(1200);
-        failed.usage = Some(failed_usage);
+        failed.usage = BilledTokenCounts::from_billed_usage(std::slice::from_ref(&failed_usage));
+        failed.model = Some(failed_usage.model().clone());
         failed.completion = Some(StageCompletion {
             outcome:        StageOutcome::Failed {
                 retry_requested: true,
@@ -945,7 +946,9 @@ mod tests {
         });
         let succeeded = projection.stage_entry("verify", 2, first_event_seq(2));
         succeeded.duration_ms = Some(800);
-        succeeded.usage = Some(success_usage.clone());
+        succeeded.usage =
+            BilledTokenCounts::from_billed_usage(std::slice::from_ref(&success_usage));
+        succeeded.model = Some(success_usage.model().clone());
         succeeded.completion = Some(StageCompletion {
             outcome:        StageOutcome::Succeeded,
             notes:          None,

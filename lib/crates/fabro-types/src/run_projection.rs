@@ -6,7 +6,7 @@ use chrono::{DateTime, Utc};
 use crate::{
     BilledModelUsage, Checkpoint, Conclusion, DiffSummary, InterviewQuestionRecord,
     InvalidTransition, PullRequestRecord, Retro, RunControlAction, RunId, RunSpec, RunStatus,
-    SandboxRecord, StageCompletion, StageId, StageState, StartRecord,
+    SandboxRecord, StageCompletion, StageHandler, StageId, StageState, StartRecord,
 };
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -62,6 +62,8 @@ pub struct StageProjection {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub started_at:        Option<DateTime<Utc>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handler:           Option<StageHandler>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub duration_ms:       Option<u64>,
     /// Server-internal billing usage for the latest attempt; not part of the
     /// wire contract because `BilledModelUsage` is not modeled in OpenAPI.
@@ -99,6 +101,7 @@ impl StageProjection {
             live_streaming: None,
             termination: None,
             started_at: None,
+            handler: None,
             state: None,
         }
     }
@@ -142,9 +145,10 @@ impl StageProjection {
     /// per-attempt field so prior-attempt data does not leak, then record
     /// `started_at` and `state = Running`. Preserves `first_event_seq`
     /// (identity / sort key).
-    pub fn begin_attempt(&mut self, started_at: DateTime<Utc>) {
+    pub fn begin_attempt(&mut self, started_at: DateTime<Utc>, handler: StageHandler) {
         *self = Self::new(self.first_event_seq);
         self.started_at = Some(started_at);
+        self.handler = Some(handler);
         self.state = Some(StageState::Running);
     }
 }

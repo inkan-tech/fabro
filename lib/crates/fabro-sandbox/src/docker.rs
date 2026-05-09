@@ -17,6 +17,7 @@ use bollard::image::CreateImageOptions;
 use bollard::models::HostConfig;
 use fabro_github::GitHubCredentials;
 use fabro_types::{CommandOutputStream, CommandTermination, RunId};
+use fabro_util::time::elapsed_ms;
 use futures::StreamExt;
 use tokio::sync::OnceCell;
 use tokio::{fs, time};
@@ -873,7 +874,7 @@ fn docker_not_found(error: &DockerError) -> bool {
     })
 }
 
-fn docker_already_stopped(error: &DockerError) -> bool {
+fn docker_not_modified(error: &DockerError) -> bool {
     matches!(error, DockerError::DockerResponseServerError {
         status_code: 304,
         ..
@@ -1148,7 +1149,7 @@ impl Sandbox for DockerSandbox {
             .start_container(&container_id, None::<StartContainerOptions<String>>)
             .await
         {
-            if !docker_already_stopped(&e) {
+            if !docker_not_modified(&e) {
                 return self.start_error(crate::Error::context(
                     format!(
                         "Failed to start Docker container '{container_id}' with labels {labels:?}"
@@ -1170,7 +1171,7 @@ impl Sandbox for DockerSandbox {
             )));
         }
 
-        let duration_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
+        let duration_ms = elapsed_ms(start);
         self.emit(SandboxEvent::StartCompleted {
             provider: "docker".into(),
             duration_ms,
@@ -1185,7 +1186,7 @@ impl Sandbox for DockerSandbox {
         let start = Instant::now();
 
         let Some(container_id) = self.container_id.get().cloned() else {
-            let duration_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
+            let duration_ms = elapsed_ms(start);
             self.emit(SandboxEvent::StopCompleted {
                 provider: "docker".into(),
                 duration_ms,
@@ -1207,7 +1208,7 @@ impl Sandbox for DockerSandbox {
             .stop_container(&container_id, Some(stop_opts))
             .await
         {
-            if !docker_not_found(&e) && !docker_already_stopped(&e) {
+            if !docker_not_found(&e) && !docker_not_modified(&e) {
                 return self.stop_error(crate::Error::context(
                     format!(
                         "Failed to stop Docker container '{container_id}' with labels {labels:?}"
@@ -1217,7 +1218,7 @@ impl Sandbox for DockerSandbox {
             }
         }
 
-        let duration_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
+        let duration_ms = elapsed_ms(start);
         self.emit(SandboxEvent::StopCompleted {
             provider: "docker".into(),
             duration_ms,
@@ -1233,7 +1234,7 @@ impl Sandbox for DockerSandbox {
         let start = Instant::now();
 
         let Some(container_id) = self.container_id.get().cloned() else {
-            let duration_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
+            let duration_ms = elapsed_ms(start);
             self.emit(SandboxEvent::DeleteCompleted {
                 provider: "docker".into(),
                 duration_ms,
@@ -1268,7 +1269,7 @@ impl Sandbox for DockerSandbox {
             }
         }
 
-        let duration_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
+        let duration_ms = elapsed_ms(start);
         self.emit(SandboxEvent::DeleteCompleted {
             provider: "docker".into(),
             duration_ms,

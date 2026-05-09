@@ -55,6 +55,10 @@ impl RunStatus {
         )
     }
 
+    pub fn requires_force_to_delete(self) -> bool {
+        self.is_active() && !matches!(self, Self::Removing)
+    }
+
     pub fn blocked_reason(self) -> Option<BlockedReason> {
         match self {
             Self::Blocked { blocked_reason } => Some(blocked_reason),

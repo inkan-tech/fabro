@@ -43,11 +43,13 @@ async fn list_run_stages(
     let stages = projection
         .iter_stages()
         .map(|(stage_id, stage)| {
-            let handler = StageHandler::from_handler_type(
-                graph
-                    .and_then(|g| g.nodes.get(stage_id.node_id()))
-                    .and_then(|n| n.handler_type()),
-            );
+            let handler = stage.handler.unwrap_or_else(|| {
+                StageHandler::from_handler_type(
+                    graph
+                        .and_then(|g| g.nodes.get(stage_id.node_id()))
+                        .and_then(|n| n.handler_type()),
+                )
+            });
             run_stage_from_stage_id(
                 stage_id,
                 stage_id.node_id().to_string(),

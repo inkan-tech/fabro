@@ -18,7 +18,7 @@ import { Menu, MenuButton, MenuItem, MenuItems } from "@headlessui/react";
 
 import { InlineMarkdown } from "../components/inline-markdown";
 import { InterviewDock } from "../components/interview-dock";
-import { GitPullRequestIcon } from "../components/icons";
+import { PullRequestChip } from "../components/pull-request-chip";
 import { SteerBar, type SteerBarHandle } from "../components/steer-bar";
 import { ErrorState } from "../components/state";
 import { useToast } from "../components/toast";
@@ -328,15 +328,11 @@ export default function RunDetail({ params }: { params: { id: string } }) {
               </Tooltip>
             )}
             {run.number != null && run.pullRequestUrl && (
-              <a
-                href={run.pullRequestUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="flex items-center gap-1.5 font-mono text-xs text-fg-muted hover:text-fg"
-              >
-                <GitPullRequestIcon className="size-3.5" />
-                #{run.number}
-              </a>
+              <PullRequestChip
+                number={run.number}
+                url={run.pullRequestUrl}
+                iconClassName="size-3.5"
+              />
             )}
           </div>
         </div>

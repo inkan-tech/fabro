@@ -10,7 +10,7 @@ use fabro_types::{
     BilledModelUsage, Checkpoint, CommandTermination, Conclusion, EventBody, FailureSignature,
     InterviewQuestionRecord, Outcome, PendingInterviewRecord, PullRequestRecord, RunControlAction,
     RunEvent, RunId, RunProjection, RunSpec, RunStatus, RunSummary, SandboxRecord, StageCompletion,
-    StageId, StageOutcome, StageProjection, StageState, StartRecord, TerminalStatus,
+    StageHandler, StageId, StageOutcome, StageProjection, StageState, StartRecord, TerminalStatus,
     first_event_seq,
 };
 use fabro_util::error::render_with_causes;
@@ -292,7 +292,7 @@ impl RunProjectionReducer for RunProjection {
             EventBody::InterviewInterrupted(props) if !props.question_id.is_empty() => {
                 self.pending_interviews.remove(&props.question_id);
             }
-            EventBody::StageStarted(_) => {
+            EventBody::StageStarted(props) => {
                 let Some(stage_id) = stored.stage_id.as_ref() else {
                     return Ok(());
                 };
@@ -301,7 +301,10 @@ impl RunProjectionReducer for RunProjection {
                     stage_id.visit(),
                     first_event_seq(event.seq),
                 );
-                stage.begin_attempt(ts);
+                stage.begin_attempt(
+                    ts,
+                    StageHandler::from_handler_type(Some(&props.handler_type)),
+                );
             }
             EventBody::StageRetrying(_) => {
                 let Some(stage) = stage_at_stored_or_current_visit(self, stored, event.seq) else {

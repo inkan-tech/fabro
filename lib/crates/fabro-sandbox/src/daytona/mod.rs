@@ -918,7 +918,7 @@ impl Sandbox for DaytonaSandbox {
             });
             return Err(err);
         }
-        let duration_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
+        let duration_ms = elapsed_ms(start);
         self.emit(SandboxEvent::StartCompleted {
             provider: "daytona".into(),
             duration_ms,
@@ -941,7 +941,7 @@ impl Sandbox for DaytonaSandbox {
             });
             return Err(err);
         }
-        let duration_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
+        let duration_ms = elapsed_ms(start);
         self.emit(SandboxEvent::StopCompleted {
             provider: "daytona".into(),
             duration_ms,
@@ -966,7 +966,7 @@ impl Sandbox for DaytonaSandbox {
                 return Err(err);
             }
         }
-        let duration_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
+        let duration_ms = elapsed_ms(start);
         self.emit(SandboxEvent::DeleteCompleted {
             provider: "daytona".into(),
             duration_ms,

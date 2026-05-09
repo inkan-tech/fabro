@@ -26,17 +26,17 @@ pub use fabro_api::types::{
     ArtifactEntry, ArtifactListResponse, BillingByModel, BillingStageRef,
     CloseRunPullRequestResponse, CompletionContentPart, CompletionMessage, CompletionMessageRole,
     CompletionResponse, CompletionToolChoiceMode, CompletionUsage, CreateCompletionRequest,
-    CreateRunPullRequestRequest, CreateSecretRequest, DeleteSecretRequest, DiskUsageResponse,
-    DiskUsageRunRow, DiskUsageSummaryRow, ForkRequest, ForkResponse, MergeRunPullRequestRequest,
-    MergeRunPullRequestResponse, ModelReference, PaginatedEventList, PaginatedRunList,
-    PaginationMeta, PreflightResponse, PreviewUrlRequest, PreviewUrlResponse, PruneRunEntry,
-    PruneRunsRequest, PruneRunsResponse, RenderWorkflowGraphDirection, RenderWorkflowGraphRequest,
-    RewindRequest, RewindResponse, RunArtifactEntry, RunArtifactListResponse, RunBilling,
-    RunBillingStage, RunBillingTotals, RunError, RunManifest, RunStage, RunStatusResponse,
-    SandboxFileEntry, SandboxFileListResponse, SshAccessRequest, SshAccessResponse, StageHandler,
-    StageState, StartRunRequest, SubmitAnswerRequest, SystemFeatures, SystemInfoResponse,
-    SystemRepairRunIssue, SystemRepairRunsResponse, SystemRunCounts, TimelineEntryResponse,
-    WriteBlobResponse,
+    CreateRunPullRequestRequest, CreateSecretRequest, DeleteRunResponse, DeleteRunSandbox,
+    DeleteSecretRequest, DiskUsageResponse, DiskUsageRunRow, DiskUsageSummaryRow, ForkRequest,
+    ForkResponse, MergeRunPullRequestRequest, MergeRunPullRequestResponse, ModelReference,
+    PaginatedEventList, PaginatedRunList, PaginationMeta, PreflightResponse, PreviewUrlRequest,
+    PreviewUrlResponse, PruneRunEntry, PruneRunsRequest, PruneRunsResponse,
+    RenderWorkflowGraphDirection, RenderWorkflowGraphRequest, RewindRequest, RewindResponse,
+    RunArtifactEntry, RunArtifactListResponse, RunBilling, RunBillingStage, RunBillingTotals,
+    RunError, RunManifest, RunStage, RunStatusResponse, SandboxFileEntry, SandboxFileListResponse,
+    SshAccessRequest, SshAccessResponse, StageHandler, StageState, StartRunRequest,
+    SubmitAnswerRequest, SystemFeatures, SystemInfoResponse, SystemRepairRunIssue,
+    SystemRepairRunsResponse, SystemRunCounts, TimelineEntryResponse, WriteBlobResponse,
 };
 use fabro_auth::{
     CredentialSource, VaultCredentialSource, auth_issue_message, parse_credential_secret,
@@ -96,7 +96,6 @@ use fabro_workflow::run_lookup::{
 };
 use fabro_workflow::run_status::{FailureReason, RunStatus, SuccessReason};
 use fabro_workflow::{Error as WorkflowError, operations, pull_request};
-use serde::Serialize;
 use sha2::{Digest, Sha256};
 use tempfile::NamedTempFile;
 use tokio::fs;
@@ -1591,19 +1590,6 @@ pub(crate) fn build_app_state(config: AppStateConfig) -> anyhow::Result<Arc<AppS
 
 const MAX_PAGE_OFFSET: u32 = 1_000_000;
 
-#[derive(Serialize)]
-struct DeleteRunResponse {
-    deleted:           bool,
-    sandbox_preserved: bool,
-    sandbox:           DeleteRunSandboxResponse,
-}
-
-#[derive(Serialize)]
-struct DeleteRunSandboxResponse {
-    provider:   String,
-    identifier: String,
-}
-
 enum DeleteRunOutcome {
     NoContent,
     Preserved(DeleteRunResponse),
@@ -1723,7 +1709,7 @@ async fn delete_run_sandbox_resource(
         return Ok(DeleteRunOutcome::Preserved(DeleteRunResponse {
             deleted:           true,
             sandbox_preserved: true,
-            sandbox:           DeleteRunSandboxResponse {
+            sandbox:           DeleteRunSandbox {
                 provider: record.provider,
                 identifier,
             },
@@ -1771,15 +1757,7 @@ async fn reject_active_delete_without_force(
         .ok()
         .and_then(|runs| runs.get(run_id).map(|managed_run| managed_run.status));
     if let Some(status) = managed_status {
-        if matches!(
-            status,
-            RunStatus::Submitted
-                | RunStatus::Queued
-                | RunStatus::Starting
-                | RunStatus::Running
-                | RunStatus::Blocked { .. }
-                | RunStatus::Paused { .. }
-        ) {
+        if status.requires_force_to_delete() {
             return Err(ApiError::new(
                 StatusCode::CONFLICT,
                 active_run_delete_message(*run_id, status),
@@ -1790,23 +1768,11 @@ async fn reject_active_delete_without_force(
     }
 
     match state.store.runs().find(run_id).await {
-        Ok(Some(summary))
-            if matches!(
-                summary.status,
-                RunStatus::Submitted
-                    | RunStatus::Queued
-                    | RunStatus::Starting
-                    | RunStatus::Running
-                    | RunStatus::Blocked { .. }
-                    | RunStatus::Paused { .. }
-            ) =>
-        {
-            Err(ApiError::new(
-                StatusCode::CONFLICT,
-                active_run_delete_message(*run_id, summary.status),
-            )
-            .into_response())
-        }
+        Ok(Some(summary)) if summary.status.requires_force_to_delete() => Err(ApiError::new(
+            StatusCode::CONFLICT,
+            active_run_delete_message(*run_id, summary.status),
+        )
+        .into_response()),
         Ok(_) => Ok(()),
         Err(err) => {
             Err(ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response())

@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { ChevronDownIcon, MagnifyingGlassIcon } from "@heroicons/react/24/outline";
 import { Link, useParams } from "react-router";
-import { GitPullRequestIcon } from "../components/icons";
 import { InlineMarkdown } from "../components/inline-markdown";
+import { PullRequestChip } from "../components/pull-request-chip";
 import { ciConfig, columnForStatus, columnStatusDisplay, deriveCiStatus, mapRunSummaryToRunItem } from "../data/runs";
 import type { ColumnStatus, RunWithStatus } from "../data/runs";
 import { useWorkflowRuns } from "../lib/queries";
@@ -26,7 +26,8 @@ function mapWorkflowRuns(result: PaginatedRunList | null | undefined): RunWithSt
 function RunRow({ run }: { run: RunWithStatus }) {
   const colors = columnStatusDisplay[run.status];
   return (
-    <Link to={`/runs/${run.id}`} className="grid items-center rounded-md border border-line bg-panel/80 px-4 py-3 transition-all duration-200 hover:border-line-strong hover:bg-panel" style={{ gridColumn: "1 / -1", gridTemplateColumns: "subgrid" }}>
+    <div className="grid items-center rounded-md border border-line bg-panel/80 px-4 py-3 transition-all duration-200 hover:border-line-strong hover:bg-panel" style={{ gridColumn: "1 / -1", gridTemplateColumns: "subgrid" }}>
+      <Link to={`/runs/${run.id}`} className="contents">
       <span className="flex items-center gap-2 pr-2">
         <span className={`size-2 shrink-0 rounded-full ${colors.dot}`} />
         <span className={`text-xs font-medium ${colors.text}`}>{run.statusLabel}</span>
@@ -52,31 +53,16 @@ function RunRow({ run }: { run: RunWithStatus }) {
         {run.additions != null && <span className="text-mint">+{run.additions.toLocaleString()}</span>}
         {run.deletions != null && <span className="text-coral">-{run.deletions.toLocaleString()}</span>}
       </span>
+      </Link>
 
       <span className="inline-flex items-center justify-end gap-1.5 font-mono text-xs text-fg-muted">
         {run.number != null && (
-          run.pullRequestUrl ? (
-            <a
-              href={run.pullRequestUrl}
-              target="_blank"
-              rel="noreferrer"
-              onClick={(event) => event.stopPropagation()}
-              className="inline-flex items-center gap-1.5 hover:text-fg"
-            >
-              <GitPullRequestIcon className="size-3" />
-              #{run.number}
-              {run.checks != null && <span className={`size-1.5 rounded-full ${ciConfig[deriveCiStatus(run.checks)].dot}`} />}
-            </a>
-          ) : (
-            <>
-              <GitPullRequestIcon className="size-3" />
-              #{run.number}
-              {run.checks != null && <span className={`size-1.5 rounded-full ${ciConfig[deriveCiStatus(run.checks)].dot}`} />}
-            </>
-          )
+          <PullRequestChip number={run.number} url={run.pullRequestUrl}>
+            {run.checks != null && <span className={`size-1.5 rounded-full ${ciConfig[deriveCiStatus(run.checks)].dot}`} />}
+          </PullRequestChip>
         )}
       </span>
-    </Link>
+    </div>
   );
 }
 

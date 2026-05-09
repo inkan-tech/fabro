@@ -1,4 +1,4 @@
-import { Fragment, type ReactNode } from "react";
+import { Fragment, useMemo, type ReactNode } from "react";
 import { Lexer, type Token } from "marked";
 
 const CODE_CLASSNAME =
@@ -46,6 +46,6 @@ export function InlineMarkdown({
   content: string;
   className?: string;
 }) {
-  const tokens = Lexer.lexInline(content);
-  return <span className={className}>{renderTokens(tokens)}</span>;
+  const children = useMemo(() => renderTokens(Lexer.lexInline(content)), [content]);
+  return <span className={className}>{children}</span>;
 }

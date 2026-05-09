@@ -4,6 +4,7 @@ use std::time::Instant;
 use async_trait::async_trait;
 use fabro_static::EnvVars;
 use fabro_types::{CommandOutputStream, CommandTermination};
+use fabro_util::time::elapsed_ms;
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::process::{Child, Command};
 use tokio::task::spawn_blocking;
@@ -314,7 +315,7 @@ impl Sandbox for LocalSandbox {
             }
         };
 
-        let duration_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
+        let duration_ms = elapsed_ms(start);
 
         let stdout_str = stdout_task.await.unwrap_or_default();
         let stderr_str = stderr_task.await.unwrap_or_default();
@@ -402,7 +403,7 @@ impl Sandbox for LocalSandbox {
             }
         };
 
-        let duration_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
+        let duration_ms = elapsed_ms(start);
         let stdout_bytes = stdout_task
             .await
             .map_err(|e| crate::Error::context("stdout stream task failed", e))??;

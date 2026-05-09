@@ -25,8 +25,8 @@ import { ciConfig, columnStatusDisplay, columnStatuses, deriveCiStatus, mapRunLi
 import type { CiStatus, CheckRun, CheckStatus, RunItem, RunWithStatus, ColumnStatus } from "../data/runs";
 import { formatRelativeTime } from "../lib/format";
 import { EmptyState } from "../components/state";
-import { GitPullRequestIcon } from "../components/icons";
 import { InlineMarkdown } from "../components/inline-markdown";
+import { PullRequestChip } from "../components/pull-request-chip";
 import { useToast } from "../components/toast";
 import { shouldRefreshBoardForEvent, useBoardEvents } from "../lib/board-events";
 import { useAuthConfig, useBoardsRuns, useSystemInfo } from "../lib/queries";
@@ -276,38 +276,29 @@ function PrCard({
   const lifecycleLabel = boardLifecycleStatusLabel(pr);
 
   return (
-    <Link to={`/runs/${pr.id}`} className="group block rounded-md border border-line bg-panel p-4 transition-all duration-200 hover:border-line-strong hover:shadow-lg hover:shadow-black/20">
+    <div className="group rounded-md border border-line bg-panel p-4 transition-all duration-200 hover:border-line-strong hover:shadow-lg hover:shadow-black/20">
       <div className="mb-2 flex items-center gap-1.5">
-        <span className="font-mono text-xs font-medium text-teal-500">
+        <Link to={`/runs/${pr.id}`} className="font-mono text-xs font-medium text-teal-500">
           {pr.repo}
-        </span>
+        </Link>
         {lifecycleLabel != null && (
           <span className="rounded-full border border-line px-1.5 py-0.5 font-mono text-[11px] uppercase tracking-wide text-fg-muted">
             {lifecycleLabel}
           </span>
         )}
         {pr.number != null && (
-          pr.pullRequestUrl ? (
-            <a
-              href={pr.pullRequestUrl}
-              target="_blank"
-              rel="noreferrer"
-              onClick={(event) => event.stopPropagation()}
-              className={`ml-auto inline-flex items-center gap-1 font-mono text-xs ${iconColor} hover:text-fg`}
-            >
-              <GitPullRequestIcon className="size-3.5 shrink-0" />
-              #{pr.number}
-            </a>
-          ) : (
-            <span className={`ml-auto inline-flex items-center gap-1 font-mono text-xs ${iconColor}`}>
-              <GitPullRequestIcon className="size-3.5 shrink-0" />
-              #{pr.number}
-            </span>
-          )
+          <PullRequestChip
+            number={pr.number}
+            url={pr.pullRequestUrl}
+            className={`ml-auto inline-flex items-center gap-1 font-mono text-xs ${iconColor}`}
+            iconClassName="size-3.5 shrink-0"
+          />
         )}
       </div>
 
-      <p className="text-sm leading-snug text-fg-2">{pr.title}</p>
+      <Link to={`/runs/${pr.id}`} className="block">
+        <p className="text-sm leading-snug text-fg-2">{pr.title}</p>
+      </Link>
 
       {(pr.resources != null || pr.comments != null || pr.elapsed != null) && (
         <div className="mt-3 flex items-center gap-3 font-mono text-xs">
@@ -387,7 +378,7 @@ function PrCard({
           )}
         </div>
       )}
-    </Link>
+    </div>
   );
 }
 
@@ -594,7 +585,8 @@ function RunRow({ run }: { run: RunWithStatus }) {
   const statusDisplay = columnStatusDisplay[run.status];
 
   return (
-    <Link to={`/runs/${run.id}`} className="grid items-center rounded-md border border-line bg-panel/80 px-4 py-3 transition-all duration-200 hover:border-line-strong hover:bg-panel" style={{ gridColumn: "1 / -1", gridTemplateColumns: "subgrid" }}>
+    <div className="grid items-center rounded-md border border-line bg-panel/80 px-4 py-3 transition-all duration-200 hover:border-line-strong hover:bg-panel" style={{ gridColumn: "1 / -1", gridTemplateColumns: "subgrid" }}>
+      <Link to={`/runs/${run.id}`} className="contents">
       <span className="flex items-center gap-2 pr-2">
         <span className={`size-1.5 shrink-0 rounded-full ${statusDisplay.dot}`} aria-hidden="true" />
         <span className={`font-mono text-xs ${statusDisplay.text}`}>{run.statusLabel}</span>
@@ -636,31 +628,16 @@ function RunRow({ run }: { run: RunWithStatus }) {
         {run.additions != null && <span className="text-mint">+{run.additions.toLocaleString()}</span>}
         {run.deletions != null && <span className="text-coral">-{run.deletions.toLocaleString()}</span>}
       </span>
+      </Link>
 
       <span className="inline-flex items-center justify-end gap-1.5 font-mono text-xs text-fg-muted">
         {run.number != null && (
-          run.pullRequestUrl ? (
-            <a
-              href={run.pullRequestUrl}
-              target="_blank"
-              rel="noreferrer"
-              onClick={(event) => event.stopPropagation()}
-              className="inline-flex items-center gap-1.5 hover:text-fg"
-            >
-              <GitPullRequestIcon className="size-3" />
-              #{run.number}
-              {run.checks != null && <span className={`size-1.5 rounded-full ${ciConfig[deriveCiStatus(run.checks)].dot}`} />}
-            </a>
-          ) : (
-            <>
-              <GitPullRequestIcon className="size-3" />
-              #{run.number}
-              {run.checks != null && <span className={`size-1.5 rounded-full ${ciConfig[deriveCiStatus(run.checks)].dot}`} />}
-            </>
-          )
+          <PullRequestChip number={run.number} url={run.pullRequestUrl}>
+            {run.checks != null && <span className={`size-1.5 rounded-full ${ciConfig[deriveCiStatus(run.checks)].dot}`} />}
+          </PullRequestChip>
         )}
       </span>
-    </Link>
+    </div>
   );
 }
 

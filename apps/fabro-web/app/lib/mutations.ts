@@ -3,14 +3,17 @@ import { useSWRConfig } from "swr";
 import type {
   PreviewUrlResponse,
   RunStatusResponse,
+  RunSummary,
   SteerRunRequest,
   SubmitAnswerRequest,
+  UpdateRunRequest,
 } from "@qltysh/fabro-api-client";
 
 import {
   apiData,
   authApi,
   humanInTheLoopApi,
+  runsApi,
 } from "./api-client";
 import { queryKeys } from "./query-keys";
 import type { LifecycleAction, LifecycleActionError } from "./run-actions";
@@ -96,6 +99,25 @@ function useLifecycleMutation(
         void mutate(queryKeys.runs.detail(id));
         void mutate(queryKeys.boards.runs());
         void mutate(queryKeys.runs.billing(id));
+      },
+    },
+  );
+}
+
+export function useUpdateRunTitle(id: string | undefined) {
+  const { mutate } = useSWRConfig();
+  return useSWRMutation(
+    id ? queryKeys.runs.updateTitle(id) : null,
+    async (_key, { arg }: { arg: UpdateRunRequest }): Promise<RunSummary> => {
+      if (!id) throw new Error("id is required");
+      return apiData(() => runsApi.updateRun(id, arg));
+    },
+    {
+      onSuccess: (run) => {
+        if (!id) return;
+        void mutate(queryKeys.runs.detail(id), run, { revalidate: false });
+        void mutate(queryKeys.boards.runs());
+        void mutate(queryKeys.boards.runs(true));
       },
     },
   );

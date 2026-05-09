@@ -44,6 +44,7 @@ export const queryKeys = {
     cancel: (id: string) => ["runs", "cancel", id] as const,
     archive: (id: string) => ["runs", "archive", id] as const,
     unarchive: (id: string) => ["runs", "unarchive", id] as const,
+    updateTitle: (id: string) => ["runs", "update-title", id] as const,
     attachUrl: (id: string) => `/api/v1/runs/${pathSegment(id)}/attach`,
   },
   workflows: {

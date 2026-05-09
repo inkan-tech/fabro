@@ -4781,8 +4781,6 @@ components:
           type: boolean
         auto_approve:
           type: boolean
-        no_retro:
-          type: boolean
         preserve_sandbox:
           type: boolean
         worktree_mode:
@@ -6102,13 +6100,6 @@ components:
         conclusion:
           type: ["object", "null"]
           additionalProperties: true
-        retro:
-          type: ["object", "null"]
-          additionalProperties: true
-        retro_prompt:
-          type: ["string", "null"]
-        retro_response:
-          type: ["string", "null"]
         sandbox:
           type: ["object", "null"]
           additionalProperties: true
@@ -8087,14 +8078,12 @@ components:
 
     RunExecutionSettings:
       type: object
-      required: [mode, approval, retros]
+      required: [mode, approval]
       properties:
         mode:
           $ref: "#/components/schemas/RunMode"
         approval:
           $ref: "#/components/schemas/ApprovalMode"
-        retros:
-          type: boolean
 
     RunMode:
       type: string
@@ -8549,9 +8538,6 @@ components:
         session_sandboxes:
           type: boolean
           description: Whether session sandboxes are enabled.
-        retros:
-          type: boolean
-          description: Whether workflow retros are enabled.
 
     SystemRunCounts:
       description: Counts of known runs in the active server process.

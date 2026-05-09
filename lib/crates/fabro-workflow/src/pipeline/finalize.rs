@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Instant;
 
 use fabro_dump::RunDump;
@@ -8,7 +9,7 @@ use fabro_types::{BilledTokenCounts, DiffSummary, EventBody, RunProjection};
 use fabro_util::error::collect_causes;
 use fabro_util::time::elapsed_ms;
 
-use super::types::{Concluded, FinalizeOptions, Retroed};
+use super::types::{Concluded, Executed, FinalizeOptions};
 use crate::error::Error;
 use crate::event::{Event, RunNoticeCode, RunNoticeLevel};
 use crate::outcome::{Outcome, OutcomeExt, StageOutcome};
@@ -526,15 +527,17 @@ async fn stop_sandbox_on_terminal(
 /// # Errors
 ///
 /// Returns `Error` if persisting terminal state fails.
-pub async fn finalize(retroed: Retroed, options: &FinalizeOptions) -> Result<Concluded, Error> {
-    let Retroed {
+pub async fn finalize(executed: Executed, options: &FinalizeOptions) -> Result<Concluded, Error> {
+    let Executed {
         graph,
         outcome,
         run_options,
         duration_ms,
-        services,
-        retro: _,
-    } = retroed;
+        final_context: _,
+        engine,
+        model: _,
+    } = executed;
+    let services = Arc::clone(&engine.run);
 
     let (final_status, failure_reason, _run_status) = classify_engine_result(&outcome);
 
@@ -650,12 +653,13 @@ mod tests {
     use object_store::memory::InMemory;
 
     use super::*;
+    use crate::context::Context;
     use crate::event::{Emitter, StoreProgressLogger, append_event};
-    use crate::pipeline::types::Retroed;
     use crate::run_metadata::{RunMetadataRuntime, RunMetadataWriterHandle};
     use crate::run_options::{GitCheckpointOptions, RunOptions};
     use crate::runtime_store::{RunStoreBackend, RunStoreHandle};
     use crate::sandbox_git_runtime::SandboxGitRuntime;
+    use crate::services::EngineServices;
 
     fn test_run_id() -> RunId {
         fixtures::RUN_1
@@ -686,6 +690,26 @@ mod tests {
             meta_branch: Some(meta_branch.to_string()),
         });
         options
+    }
+
+    fn test_executed(
+        graph: Graph,
+        outcome: Result<Outcome, Error>,
+        run_options: RunOptions,
+        duration_ms: u64,
+        services: Arc<RunServices>,
+    ) -> Executed {
+        let mut engine = EngineServices::test_default();
+        engine.run = services;
+        Executed {
+            graph,
+            outcome,
+            run_options,
+            duration_ms,
+            final_context: Context::new(),
+            engine: Arc::new(engine),
+            model: "test-model".to_string(),
+        }
     }
 
     fn test_store() -> Arc<Database> {
@@ -1008,16 +1032,15 @@ mod tests {
             Arc::new(RunMetadataRuntime::new()),
             None,
         );
-        let retroed = Retroed {
-            graph: Graph::new("test"),
-            outcome: Ok(Outcome::success()),
-            run_options: test_run_options(&run_dir),
-            duration_ms: 5,
+        let executed = test_executed(
+            Graph::new("test"),
+            Ok(Outcome::success()),
+            test_run_options(&run_dir),
+            5,
             services,
-            retro: None,
-        };
+        );
 
-        let concluded = finalize(retroed, &FinalizeOptions {
+        let concluded = finalize(executed, &FinalizeOptions {
             run_dir:          run_dir.clone(),
             run_id:           test_run_id(),
             workflow_name:    "test".to_string(),
@@ -1187,16 +1210,15 @@ mod tests {
                 "fabro/metadata/run",
             )),
         );
-        let retroed = Retroed {
-            graph: Graph::new("test"),
-            outcome: Ok(Outcome::success()),
-            run_options: test_git_run_options(repo_dir.path(), "fabro/metadata/run"),
-            duration_ms: 5,
+        let executed = test_executed(
+            Graph::new("test"),
+            Ok(Outcome::success()),
+            test_git_run_options(repo_dir.path(), "fabro/metadata/run"),
+            5,
             services,
-            retro: None,
-        };
+        );
 
-        finalize(retroed, &FinalizeOptions {
+        finalize(executed, &FinalizeOptions {
             run_dir:          repo_dir.path().to_path_buf(),
             run_id:           test_run_id(),
             workflow_name:    "test".to_string(),
@@ -1231,16 +1253,15 @@ mod tests {
             Arc::new(RunMetadataRuntime::new()),
             None,
         );
-        let retroed = Retroed {
-            graph: Graph::new("test"),
-            outcome: Ok(Outcome::success()),
-            run_options: test_run_options(repo_dir.path()),
-            duration_ms: 5,
+        let executed = test_executed(
+            Graph::new("test"),
+            Ok(Outcome::success()),
+            test_run_options(repo_dir.path()),
+            5,
             services,
-            retro: None,
-        };
+        );
 
-        finalize(retroed, &FinalizeOptions {
+        finalize(executed, &FinalizeOptions {
             run_dir:          repo_dir.path().to_path_buf(),
             run_id:           test_run_id(),
             workflow_name:    "test".to_string(),
@@ -1266,16 +1287,15 @@ mod tests {
             Arc::new(RunMetadataRuntime::new()),
             None,
         );
-        let retroed = Retroed {
-            graph: Graph::new("test"),
-            outcome: Ok(Outcome::success()),
-            run_options: test_run_options(repo_dir.path()),
-            duration_ms: 5,
+        let executed = test_executed(
+            Graph::new("test"),
+            Ok(Outcome::success()),
+            test_run_options(repo_dir.path()),
+            5,
             services,
-            retro: None,
-        };
+        );
 
-        finalize(retroed, &FinalizeOptions {
+        finalize(executed, &FinalizeOptions {
             run_dir:          repo_dir.path().to_path_buf(),
             run_id:           test_run_id(),
             workflow_name:    "test".to_string(),
@@ -1320,16 +1340,15 @@ mod tests {
             run_branch:  None,
             meta_branch: None,
         });
-        let retroed = Retroed {
-            graph: Graph::new("test"),
-            outcome: Ok(Outcome::success()),
+        let executed = test_executed(
+            Graph::new("test"),
+            Ok(Outcome::success()),
             run_options,
-            duration_ms: 5,
+            5,
             services,
-            retro: None,
-        };
+        );
 
-        finalize(retroed, &FinalizeOptions {
+        finalize(executed, &FinalizeOptions {
             run_dir:          repo.to_path_buf(),
             run_id:           test_run_id(),
             workflow_name:    "test".to_string(),

@@ -161,7 +161,6 @@ fn start_detached_human_run(
         .args([
             "run",
             "--detach",
-            "--no-retro",
             "--sandbox",
             "local",
             "--provider",
@@ -330,7 +329,6 @@ fn attach_replays_completed_detached_run() {
             "run",
             "--dry-run",
             "--auto-approve",
-            "--no-retro",
             "--detach",
             "--run-id",
             run_id.as_str(),
@@ -394,7 +392,6 @@ fn attach_advances_when_pending_question_is_answered_elsewhere() {
         .args([
             "run",
             "--detach",
-            "--no-retro",
             "--sandbox",
             "local",
             "--provider",
@@ -522,7 +519,6 @@ fn attach_before_completion_streams_to_finished_state() {
         "openai",
         "--sandbox",
         "local",
-        "--no-retro",
         "slow.fabro",
     ]);
     let run_output = run_cmd.output().expect("command should execute");
@@ -643,7 +639,6 @@ fn attach_json_errors_without_prompting_for_human_input() {
         .args([
             "run",
             "--detach",
-            "--no-retro",
             "--sandbox",
             "local",
             "--provider",
@@ -937,8 +932,7 @@ fn attach_json_errors_without_prompting_for_human_input() {
               },
               "execution": {
                 "approval": "prompt",
-                "mode": "normal",
-                "retros": false
+                "mode": "normal"
               },
               "git": {
                 "author": null

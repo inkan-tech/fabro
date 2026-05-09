@@ -55,9 +55,6 @@ export interface RunProjection {
      */
     'checkpoints'?: Array<Array<RunProjectionCheckpointsInnerInner>>;
     'conclusion'?: { [key: string]: any; } | null;
-    'retro'?: { [key: string]: any; } | null;
-    'retro_prompt'?: string | null;
-    'retro_response'?: string | null;
     'sandbox'?: { [key: string]: any; } | null;
     'final_patch'?: string | null;
     'diff_summary'?: DiffSummary | null;

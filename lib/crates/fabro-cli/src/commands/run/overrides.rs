@@ -57,12 +57,8 @@ fn sandbox_layer(
     })
 }
 
-fn execution_layer(
-    dry_run: Option<bool>,
-    auto_approve: Option<bool>,
-    no_retro: Option<bool>,
-) -> Option<RunExecutionLayer> {
-    if dry_run.is_none() && auto_approve.is_none() && no_retro.is_none() {
+fn execution_layer(dry_run: Option<bool>, auto_approve: Option<bool>) -> Option<RunExecutionLayer> {
+    if dry_run.is_none() && auto_approve.is_none() {
         return None;
     }
     Some(RunExecutionLayer {
@@ -74,7 +70,6 @@ fn execution_layer(
                 ApprovalMode::Prompt
             }
         }),
-        retros:   no_retro.map(|nr| !nr),
     })
 }
 
@@ -129,11 +124,7 @@ pub(crate) fn run_args_overrides(args: &RunArgs) -> Result<ManifestSettingsOverr
         args.sandbox.map(Into::into),
         sparse_flag(args.preserve_sandbox),
     );
-    let execution = execution_layer(
-        sparse_flag(args.dry_run),
-        sparse_flag(args.auto_approve),
-        sparse_flag(args.no_retro),
-    );
+    let execution = execution_layer(sparse_flag(args.dry_run), sparse_flag(args.auto_approve));
 
     let cwd = current_dir_or_dot();
     let goal = goal_layer_from_args(args.goal.as_deref(), args.goal_file.as_deref(), &cwd)?;

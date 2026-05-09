@@ -5,7 +5,7 @@ use chrono::{DateTime, Utc};
 
 use crate::{
     BilledModelUsage, Checkpoint, Conclusion, DiffSummary, InterviewQuestionRecord,
-    InvalidTransition, PullRequestRecord, Retro, RunControlAction, RunId, RunSpec, RunStatus,
+    InvalidTransition, PullRequestRecord, RunControlAction, RunId, RunSpec, RunStatus,
     SandboxRecord, StageCompletion, StageHandler, StageId, StageState, StartRecord,
 };
 
@@ -22,9 +22,6 @@ pub struct RunProjection {
     pub checkpoint:         Option<Checkpoint>,
     pub checkpoints:        Vec<(u32, Checkpoint)>,
     pub conclusion:         Option<Conclusion>,
-    pub retro:              Option<Retro>,
-    pub retro_prompt:       Option<String>,
-    pub retro_response:     Option<String>,
     pub sandbox:            Option<SandboxRecord>,
     pub final_patch:        Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

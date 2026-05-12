@@ -28,13 +28,11 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use chrono::NaiveDate;
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use fabro_model::catalog::deserialize_knowledge_cutoff;
+pub use fabro_model::{CredentialRef, CredentialRefParseError, HeaderValueRef};
+use serde::{Deserialize, Serialize};
 
 use super::maps::MergeMap;
-
-const CREDENTIAL_REF_PREFIX: &str = "credential:";
-const ENV_REF_PREFIX: &str = "env:";
 
 /// Top-level `[llm]` settings layer.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, fabro_macros::Combine)]
@@ -93,15 +91,18 @@ pub struct ModelSettings {
     pub display_name:         Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub family:               Option<String>,
-    /// Knowledge cutoff as an exact `YYYY-MM-DD` date. Lower-precision labels
-    /// (e.g. `May 2025`) migrate to the first of the month (`2025-05-01`);
-    /// presentation can render lower precision.
+    /// Training data cutoff label. Built-ins keep the exact public string
+    /// already exposed by the model API.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub training:             Option<String>,
+    /// Public knowledge cutoff label. Built-ins keep values such as
+    /// `"May 2025"` exactly; bare TOML dates are normalized to `YYYY-MM-DD`.
     #[serde(
         default,
         deserialize_with = "deserialize_knowledge_cutoff",
         skip_serializing_if = "Option::is_none"
     )]
-    pub knowledge_cutoff:     Option<NaiveDate>,
+    pub knowledge_cutoff:     Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default:              Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -181,279 +182,6 @@ pub struct CostRates {
     pub output_cost_per_mtok:      Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_input_cost_per_mtok: Option<f64>,
-}
-
-/// Accept either a TOML local-date (`2025-01-01` → `Datetime`) or a
-/// `YYYY-MM-DD` string for `knowledge_cutoff`. JSON has no native date
-/// literal; settings authors use the bare TOML date form, but JSON loaders
-/// (e.g. defaults bundled as JSON) supply a string.
-fn deserialize_knowledge_cutoff<'de, D>(deserializer: D) -> Result<Option<NaiveDate>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    use serde::de::Error;
-    use toml::value::Datetime;
-
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum Either {
-        Toml(Datetime),
-        Str(String),
-    }
-
-    let value = Option::<Either>::deserialize(deserializer)?;
-    match value {
-        None => Ok(None),
-        Some(Either::Str(s)) => NaiveDate::parse_from_str(&s, "%Y-%m-%d")
-            .map(Some)
-            .map_err(D::Error::custom),
-        Some(Either::Toml(dt)) => {
-            let date = dt
-                .date
-                .ok_or_else(|| D::Error::custom("knowledge_cutoff requires a date component"))?;
-            NaiveDate::from_ymd_opt(date.year.into(), date.month.into(), date.day.into())
-                .ok_or_else(|| D::Error::custom("knowledge_cutoff is not a valid calendar date"))
-                .map(Some)
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// CredentialRef — typed credential reference
-// ---------------------------------------------------------------------------
-
-/// A typed credential reference. Literal secret strings are rejected at
-/// deserialization so settings never carry a successful "secret string"
-/// representation.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(into = "String", try_from = "String")]
-pub enum CredentialRef {
-    /// Structured credential stored in `fabro-vault` keyed by `<id>`.
-    Credential(String),
-    /// Process environment variable `<NAME>`. Falls back to a raw vault
-    /// secret with the same name when the env var is unset.
-    Env(String),
-}
-
-impl std::fmt::Display for CredentialRef {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // Display deliberately writes only the typed reference form, never
-        // any resolved secret value. Env names and credential IDs are not
-        // themselves secret.
-        match self {
-            Self::Credential(id) => write!(f, "{CREDENTIAL_REF_PREFIX}{id}"),
-            Self::Env(name) => write!(f, "{ENV_REF_PREFIX}{name}"),
-        }
-    }
-}
-
-impl From<CredentialRef> for String {
-    fn from(value: CredentialRef) -> Self {
-        value.to_string()
-    }
-}
-
-/// Error returned when a credential string is neither `credential:<id>` nor
-/// `env:<NAME>`. Literal secret strings always fall into this branch and
-/// fail deserialization — by design. Variants deliberately never carry the
-/// rejected input, since it could be a literal secret.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CredentialRefParseError(CredentialRefParseErrorKind);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CredentialRefParseErrorKind {
-    MissingCredentialId,
-    MissingEnvName,
-    InvalidForm,
-}
-
-impl std::fmt::Display for CredentialRefParseError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self.0 {
-            CredentialRefParseErrorKind::MissingCredentialId => {
-                f.write_str("credential reference is missing an ID after `credential:`")
-            }
-            CredentialRefParseErrorKind::MissingEnvName => {
-                f.write_str("credential reference is missing a name after `env:`")
-            }
-            CredentialRefParseErrorKind::InvalidForm => f.write_str(
-                "credential reference must be `credential:<id>` or `env:<NAME>`; literal secret strings are rejected",
-            ),
-        }
-    }
-}
-
-impl std::error::Error for CredentialRefParseError {}
-
-impl std::str::FromStr for CredentialRef {
-    type Err = CredentialRefParseError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if let Some(id) = s.strip_prefix(CREDENTIAL_REF_PREFIX) {
-            if id.is_empty() {
-                return Err(CredentialRefParseError(
-                    CredentialRefParseErrorKind::MissingCredentialId,
-                ));
-            }
-            return Ok(Self::Credential(id.to_string()));
-        }
-        if let Some(name) = s.strip_prefix(ENV_REF_PREFIX) {
-            if name.is_empty() {
-                return Err(CredentialRefParseError(
-                    CredentialRefParseErrorKind::MissingEnvName,
-                ));
-            }
-            return Ok(Self::Env(name.to_string()));
-        }
-        Err(CredentialRefParseError(
-            CredentialRefParseErrorKind::InvalidForm,
-        ))
-    }
-}
-
-impl TryFrom<String> for CredentialRef {
-    type Error = CredentialRefParseError;
-
-    fn try_from(value: String) -> Result<Self, Self::Error> {
-        value.parse()
-    }
-}
-
-// ---------------------------------------------------------------------------
-// HeaderValueRef - typed extra header value
-// ---------------------------------------------------------------------------
-
-/// A typed provider extra-header value.
-///
-/// Literal values are intended for non-secret routing metadata. Secret-bearing
-/// values must use `env` or `credential` references so settings never need to
-/// carry raw API keys as successful values.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum HeaderValueRef {
-    Literal(String),
-    Env(String),
-    Credential(String),
-}
-
-impl Serialize for HeaderValueRef {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        use serde::ser::SerializeMap;
-
-        let mut map = serializer.serialize_map(Some(1))?;
-        match self {
-            Self::Literal(value) => map.serialize_entry("literal", value)?,
-            Self::Env(value) => map.serialize_entry("env", value)?,
-            Self::Credential(value) => map.serialize_entry("credential", value)?,
-        }
-        map.end()
-    }
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-enum HeaderValueRefInput {
-    Table(HeaderValueRefSerde),
-    BareString(String),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "snake_case", deny_unknown_fields)]
-struct HeaderValueRefSerde {
-    #[serde(default)]
-    literal:    Option<String>,
-    #[serde(default)]
-    env:        Option<String>,
-    #[serde(default)]
-    credential: Option<String>,
-}
-
-impl<'de> Deserialize<'de> for HeaderValueRef {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        use serde::de::Error as _;
-
-        match HeaderValueRefInput::deserialize(deserializer)? {
-            HeaderValueRefInput::Table(value) => value.try_into().map_err(D::Error::custom),
-            HeaderValueRefInput::BareString(value) => {
-                drop(value);
-                Err(D::Error::custom(HeaderValueRefParseError::WrongFieldCount))
-            }
-        }
-    }
-}
-
-impl TryFrom<HeaderValueRefSerde> for HeaderValueRef {
-    type Error = HeaderValueRefParseError;
-
-    fn try_from(value: HeaderValueRefSerde) -> Result<Self, Self::Error> {
-        let populated = [
-            value.literal.as_ref(),
-            value.env.as_ref(),
-            value.credential.as_ref(),
-        ]
-        .into_iter()
-        .flatten()
-        .count();
-
-        if populated != 1 {
-            return Err(HeaderValueRefParseError::WrongFieldCount);
-        }
-
-        if let Some(value) = value.literal {
-            if value.is_empty() {
-                return Err(HeaderValueRefParseError::EmptyValue);
-            }
-            return Ok(Self::Literal(value));
-        }
-        if let Some(value) = value.env {
-            if value.is_empty() {
-                return Err(HeaderValueRefParseError::EmptyValue);
-            }
-            return Ok(Self::Env(value));
-        }
-        if let Some(value) = value.credential {
-            if value.is_empty() {
-                return Err(HeaderValueRefParseError::EmptyValue);
-            }
-            return Ok(Self::Credential(value));
-        }
-
-        unreachable!("populated field count was already checked");
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum HeaderValueRefParseError {
-    WrongFieldCount,
-    EmptyValue,
-}
-
-impl std::fmt::Display for HeaderValueRefParseError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::WrongFieldCount => f.write_str(
-                "header value must be a table with exactly one of `literal`, `env`, or `credential`; bare strings are rejected",
-            ),
-            Self::EmptyValue => f.write_str("header value reference must not be empty"),
-        }
-    }
-}
-
-impl std::error::Error for HeaderValueRefParseError {}
-
-impl std::fmt::Display for HeaderValueRef {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Literal(_) => f.write_str("literal:<redacted>"),
-            Self::Env(name) => write!(f, "env:{name}"),
-            Self::Credential(id) => write!(f, "credential:{id}"),
-        }
-    }
 }
 
 #[cfg(test)]
@@ -770,6 +498,7 @@ provider = "kimi"
 api_id = "kimi-k2.5"
 display_name = "Kimi K2.5"
 family = "kimi"
+training = "2025-01-01"
 knowledge_cutoff = 2025-01-01
 default = true
 enabled = true
@@ -797,10 +526,8 @@ cache_input_cost_per_mtok = 0.15
         assert_eq!(m.api_id.as_deref(), Some("kimi-k2.5"));
         assert_eq!(m.display_name.as_deref(), Some("Kimi K2.5"));
         assert_eq!(m.family.as_deref(), Some("kimi"));
-        assert_eq!(
-            m.knowledge_cutoff,
-            Some(NaiveDate::from_ymd_opt(2025, 1, 1).unwrap())
-        );
+        assert_eq!(m.training.as_deref(), Some("2025-01-01"));
+        assert_eq!(m.knowledge_cutoff.as_deref(), Some("2025-01-01"));
         assert_eq!(m.default, Some(true));
         assert_eq!(m.enabled, Some(true));
         assert_eq!(m.aliases.as_deref(), Some(&["kimi".to_string()][..]));
@@ -821,6 +548,19 @@ cache_input_cost_per_mtok = 0.15
         assert_eq!(costs.base.output_cost_per_mtok, Some(2.50));
         assert_eq!(costs.base.cache_input_cost_per_mtok, Some(0.15));
         assert!(costs.speed.is_none());
+    }
+
+    #[test]
+    fn parses_knowledge_cutoff_display_label() {
+        let toml = r#"
+[models."claude-opus-4-7"]
+provider = "anthropic"
+knowledge_cutoff = "May 2025"
+"#;
+        let layer: LlmLayer = toml::from_str(toml).unwrap();
+        let m = layer.models.get("claude-opus-4-7").unwrap();
+
+        assert_eq!(m.knowledge_cutoff.as_deref(), Some("May 2025"));
     }
 
     #[test]

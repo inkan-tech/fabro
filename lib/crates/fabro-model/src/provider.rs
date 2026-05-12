@@ -2,6 +2,8 @@ use fabro_static::EnvVars;
 use serde::{Deserialize, Serialize};
 use strum::{Display, EnumString, IntoStaticStr};
 
+use crate::ids::ProviderId;
+
 // ---------------------------------------------------------------------------
 // Provider enum — compile-time safe provider identity
 // ---------------------------------------------------------------------------
@@ -39,6 +41,16 @@ pub enum Provider {
 }
 
 impl Provider {
+    #[must_use]
+    pub fn id(self) -> ProviderId {
+        ProviderId::from(<&'static str>::from(self))
+    }
+
+    #[must_use]
+    pub fn from_id(id: &ProviderId) -> Option<Self> {
+        id.as_str().parse().ok()
+    }
+
     /// All known provider variants, for use in guardrail tests and iteration.
     pub const ALL: &[Self] = &[
         Self::Anthropic,
@@ -120,6 +132,20 @@ impl Provider {
             Self::OpenAiCompatible => "OpenAI Compatible",
         }
     }
+
+    #[must_use]
+    pub fn display_name_for_id(id: &ProviderId) -> String {
+        Self::from_id(id).map_or_else(
+            || id.to_string(),
+            |provider| provider.display_name().to_string(),
+        )
+    }
+}
+
+impl From<Provider> for ProviderId {
+    fn from(provider: Provider) -> Self {
+        provider.id()
+    }
 }
 
 #[cfg(test)]
@@ -129,6 +155,30 @@ mod tests {
     #[test]
     fn parse_kimi() {
         assert_eq!("kimi".parse::<Provider>().unwrap(), Provider::Kimi);
+    }
+
+    #[test]
+    fn provider_id_preserves_canonical_builtin_strings() {
+        assert_eq!(Provider::Anthropic.id().as_str(), ProviderId::ANTHROPIC);
+        assert_eq!(Provider::OpenAi.id().as_str(), ProviderId::OPENAI);
+        assert_eq!(Provider::Gemini.id().as_str(), ProviderId::GEMINI);
+        assert_eq!(Provider::Kimi.id().as_str(), ProviderId::KIMI);
+        assert_eq!(Provider::Zai.id().as_str(), ProviderId::ZAI);
+        assert_eq!(Provider::Minimax.id().as_str(), ProviderId::MINIMAX);
+        assert_eq!(Provider::Inception.id().as_str(), ProviderId::INCEPTION);
+        assert_eq!(
+            Provider::OpenAiCompatible.id().as_str(),
+            ProviderId::OPENAI_COMPATIBLE,
+        );
+    }
+
+    #[test]
+    fn provider_from_id_accepts_builtins_and_rejects_custom_ids() {
+        assert_eq!(
+            Provider::from_id(&ProviderId::openai()),
+            Some(Provider::OpenAi)
+        );
+        assert_eq!(Provider::from_id(&ProviderId::new("venice")), None);
     }
 
     #[test]

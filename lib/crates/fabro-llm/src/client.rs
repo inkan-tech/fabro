@@ -4,16 +4,11 @@ use std::sync::Arc;
 use fabro_auth::{ApiCredential, ApiKeyHeader, CredentialSource};
 use tracing::debug;
 
+use crate::adapter_registry::{AdapterConfig, factory_for};
 use crate::error::Error;
 use crate::middleware::{Middleware, NextFn, NextStreamFn};
 use crate::provider::{ProviderAdapter, StreamEventStream};
-use crate::providers;
 use crate::types::{Request, Response};
-
-const KIMI_BASE_URL: &str = "https://api.moonshot.ai/v1";
-const ZAI_BASE_URL: &str = "https://api.z.ai/api/coding/paas/v4";
-const MINIMAX_BASE_URL: &str = "https://api.minimax.io/v1";
-const INCEPTION_BASE_URL: &str = "https://api.inceptionlabs.ai/v1";
 
 /// The core client that routes requests to provider adapters (Section 2.2, 3).
 #[derive(Clone)]
@@ -65,107 +60,35 @@ impl Client {
         };
 
         for credential in credentials {
-            let auth_value = auth_value(&credential.auth_header);
-            match credential.provider {
-                fabro_model::Provider::Anthropic => {
-                    let mut adapter = providers::AnthropicAdapter::new(auth_value);
-                    if let Some(base_url) = credential.base_url {
-                        adapter = adapter.with_base_url(base_url);
-                    }
-                    if !credential.extra_headers.is_empty() {
-                        adapter = adapter.with_default_headers(credential.extra_headers);
-                    }
-                    client.register_provider(Arc::new(adapter)).await?;
-                }
-                fabro_model::Provider::OpenAi => {
-                    let mut adapter = providers::OpenAiAdapter::new(auth_value);
-                    if let Some(base_url) = credential.base_url {
-                        adapter = adapter.with_base_url(base_url);
-                    }
-                    if !credential.extra_headers.is_empty() {
-                        adapter = adapter.with_default_headers(credential.extra_headers);
-                    }
-                    if credential.codex_mode {
-                        adapter = adapter.with_codex_mode();
-                    }
-                    if let Some(org_id) = credential.org_id {
-                        adapter = adapter.with_org_id(org_id);
-                    }
-                    if let Some(project_id) = credential.project_id {
-                        adapter = adapter.with_project_id(project_id);
-                    }
-                    client.register_provider(Arc::new(adapter)).await?;
-                }
-                fabro_model::Provider::Gemini => {
-                    let mut adapter = providers::GeminiAdapter::new(auth_value);
-                    if let Some(base_url) = credential.base_url {
-                        adapter = adapter.with_base_url(base_url);
-                    }
-                    if !credential.extra_headers.is_empty() {
-                        adapter = adapter.with_default_headers(credential.extra_headers);
-                    }
-                    client.register_provider(Arc::new(adapter)).await?;
-                }
-                fabro_model::Provider::Kimi => {
-                    let mut adapter = providers::OpenAiCompatibleAdapter::new(
-                        auth_value,
-                        credential
-                            .base_url
-                            .unwrap_or_else(|| KIMI_BASE_URL.to_string()),
-                    )
-                    .with_name("kimi");
-                    if !credential.extra_headers.is_empty() {
-                        adapter = adapter.with_default_headers(credential.extra_headers);
-                    }
-                    client.register_provider(Arc::new(adapter)).await?;
-                }
-                fabro_model::Provider::Zai => {
-                    let mut adapter = providers::OpenAiCompatibleAdapter::new(
-                        auth_value,
-                        credential
-                            .base_url
-                            .unwrap_or_else(|| ZAI_BASE_URL.to_string()),
-                    )
-                    .with_name("zai");
-                    if !credential.extra_headers.is_empty() {
-                        adapter = adapter.with_default_headers(credential.extra_headers);
-                    }
-                    client.register_provider(Arc::new(adapter)).await?;
-                }
-                fabro_model::Provider::Minimax => {
-                    let mut adapter = providers::OpenAiCompatibleAdapter::new(
-                        auth_value,
-                        credential
-                            .base_url
-                            .unwrap_or_else(|| MINIMAX_BASE_URL.to_string()),
-                    )
-                    .with_name("minimax");
-                    if !credential.extra_headers.is_empty() {
-                        adapter = adapter.with_default_headers(credential.extra_headers);
-                    }
-                    client.register_provider(Arc::new(adapter)).await?;
-                }
-                fabro_model::Provider::Inception => {
-                    let mut adapter = providers::OpenAiCompatibleAdapter::new(
-                        auth_value,
-                        credential
-                            .base_url
-                            .unwrap_or_else(|| INCEPTION_BASE_URL.to_string()),
-                    )
-                    .with_name("inception");
-                    if !credential.extra_headers.is_empty() {
-                        adapter = adapter.with_default_headers(credential.extra_headers);
-                    }
-                    client.register_provider(Arc::new(adapter)).await?;
-                }
-                fabro_model::Provider::OpenAiCompatible => {
-                    return Err(Error::Configuration {
-                        message: "Provider::OpenAiCompatible is not supported by from_credentials"
-                            .to_string(),
-                        source:  None,
-                    });
-                }
-            }
+            let provider_id = credential.provider.clone();
+            let Some(provider) = fabro_model::Catalog::builtin().provider(&provider_id) else {
+                return Err(Error::Configuration {
+                    message: format!(
+                        "Provider \"{provider_id}\" is not supported by credential-only registration"
+                    ),
+                    source:  None,
+                });
+            };
+            let Some(factory) = factory_for(&provider.adapter) else {
+                return Err(Error::Configuration {
+                    message: format!(
+                        "Provider \"{provider_id}\" uses unsupported adapter \"{}\"",
+                        provider.adapter
+                    ),
+                    source:  None,
+                });
+            };
+
+            let adapter = factory(AdapterConfig {
+                provider_id:   provider.id.to_string(),
+                auth_header:   credential.auth_header,
+                base_url:      credential.base_url.or_else(|| provider.base_url.clone()),
+                extra_headers: credential.extra_headers,
+                codex_mode:    credential.codex_mode,
+                org_id:        credential.org_id,
+                project_id:    credential.project_id,
+            });
+            client.register_provider(adapter).await?;
         }
 
         debug!(
@@ -314,6 +237,12 @@ impl Client {
             .collect()
     }
 
+    /// Check whether a provider adapter is registered.
+    #[must_use]
+    pub fn has_provider(&self, name: &str) -> bool {
+        self.providers.contains_key(name)
+    }
+
     /// Get the default provider name.
     #[must_use]
     pub fn default_provider(&self) -> Option<&str> {
@@ -432,10 +361,10 @@ mod tests {
             })
         }
 
-        async fn configured_providers(&self) -> Vec<fabro_model::Provider> {
+        async fn configured_providers(&self) -> Vec<fabro_model::ProviderId> {
             self.credentials
                 .iter()
-                .map(|credential| credential.provider)
+                .map(|credential| credential.provider.clone())
                 .collect()
         }
     }
@@ -498,7 +427,7 @@ mod tests {
     async fn from_credentials_registers_multiple_providers() {
         let client = Client::from_credentials(vec![
             ApiCredential {
-                provider:      fabro_model::Provider::Anthropic,
+                provider:      fabro_model::Provider::Anthropic.id(),
                 auth_header:   ApiKeyHeader::Custom {
                     name:  "x-api-key".to_string(),
                     value: "anthropic-key".to_string(),
@@ -510,7 +439,7 @@ mod tests {
                 project_id:    None,
             },
             ApiCredential {
-                provider:      fabro_model::Provider::OpenAi,
+                provider:      fabro_model::Provider::OpenAi.id(),
                 auth_header:   ApiKeyHeader::Bearer("openai-key".to_string()),
                 extra_headers: HashMap::new(),
                 base_url:      None,
@@ -531,7 +460,7 @@ mod tests {
     #[tokio::test]
     async fn from_credentials_supports_openai_compatible_provider_constants() {
         let client = Client::from_credentials(vec![ApiCredential {
-            provider:      fabro_model::Provider::Kimi,
+            provider:      fabro_model::Provider::Kimi.id(),
             auth_header:   ApiKeyHeader::Bearer("kimi-key".to_string()),
             extra_headers: HashMap::new(),
             base_url:      None,
@@ -547,10 +476,35 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn from_credentials_rejects_custom_provider_id_without_adapter() {
+        let result = Client::from_credentials(vec![ApiCredential {
+            provider:      fabro_model::ProviderId::new("venice"),
+            auth_header:   ApiKeyHeader::Bearer("venice-key".to_string()),
+            extra_headers: HashMap::new(),
+            base_url:      None,
+            codex_mode:    false,
+            org_id:        None,
+            project_id:    None,
+        }])
+        .await;
+        let Err(err) = result else {
+            panic!("custom provider credentials should fail without a registered adapter");
+        };
+
+        assert!(matches!(
+            err,
+            Error::Configuration {
+                ref message,
+                ..
+            } if message == "Provider \"venice\" is not supported by credential-only registration"
+        ));
+    }
+
+    #[tokio::test]
     async fn from_source_registers_provider_from_resolved_credentials() {
         let source = StubSource {
             credentials: vec![ApiCredential {
-                provider:      fabro_model::Provider::Anthropic,
+                provider:      fabro_model::Provider::Anthropic.id(),
                 auth_header:   ApiKeyHeader::Custom {
                     name:  "x-api-key".to_string(),
                     value: "anthropic-key".to_string(),

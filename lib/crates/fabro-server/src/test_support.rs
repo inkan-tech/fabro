@@ -15,6 +15,7 @@ use axum::{Router, middleware};
 use chrono::Duration as ChronoDuration;
 use fabro_config::{RunLayer, RunSettingsBuilder, ServerSettingsBuilder, envfile};
 use fabro_interview::Interviewer;
+use fabro_model::catalog::LlmCatalogSettings;
 use fabro_static::EnvVars;
 use fabro_store::{ArtifactStore, Database};
 use fabro_types::settings::ServerAuthMethod;
@@ -64,6 +65,7 @@ pub struct TestAppStateBuilder {
     server_env_path:           Option<PathBuf>,
     server_secret_env:         HashMap<String, String>,
     env_lookup:                EnvLookup,
+    llm_catalog_settings:      LlmCatalogSettings,
 }
 
 impl Default for TestAppStateBuilder {
@@ -78,6 +80,7 @@ impl Default for TestAppStateBuilder {
             server_env_path:           None,
             server_secret_env:         HashMap::new(),
             env_lookup:                default_env_lookup(),
+            llm_catalog_settings:      LlmCatalogSettings::default(),
         }
     }
 }
@@ -121,6 +124,11 @@ impl TestAppStateBuilder {
         self
     }
 
+    pub fn llm_catalog_settings(mut self, settings: LlmCatalogSettings) -> Self {
+        self.llm_catalog_settings = settings;
+        self
+    }
+
     pub fn server_secret_env(mut self, server_secret_env: HashMap<String, String>) -> Self {
         self.server_secret_env = server_secret_env;
         self
@@ -151,6 +159,7 @@ impl TestAppStateBuilder {
             resolved_settings: resolved_runtime_settings_for_tests(
                 self.server_settings,
                 self.manifest_run_defaults,
+                self.llm_catalog_settings,
             ),
             registry_factory_override: self.registry_factory_override,
             max_concurrent_runs: self.max_concurrent_runs,
@@ -219,12 +228,14 @@ pub fn test_app_state_with_options(
 pub(crate) fn resolved_runtime_settings_for_tests(
     server_settings: ServerSettings,
     manifest_run_defaults: RunLayer,
+    llm_catalog_settings: LlmCatalogSettings,
 ) -> ResolvedAppStateSettings {
     ResolvedAppStateSettings {
         manifest_run_settings: RunSettingsBuilder::from_run_layer(&manifest_run_defaults)
             .map_err(|err| SharedError::new(anyhow::Error::new(err))),
         manifest_run_defaults,
         server_settings,
+        llm_catalog_settings,
     }
 }
 

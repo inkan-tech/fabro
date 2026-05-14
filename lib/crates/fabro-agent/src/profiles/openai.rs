@@ -66,15 +66,15 @@ impl OpenAiProfile {
         self
     }
 
-    fn provider_display_name(&self) -> &str {
-        match self.base.provider {
-            Provider::OpenAi => "OpenAI",
-            Provider::Kimi => "Moonshot",
-            Provider::Zai => "Zhipu AI",
-            Provider::Minimax => "MiniMax",
-            Provider::Inception => "Inception",
-            other => <&'static str>::from(other),
-        }
+    fn provider_display_name(&self) -> String {
+        self.base
+            .catalog
+            .as_ref()
+            .and_then(|catalog| catalog.provider(&self.base.provider_id))
+            .map_or_else(
+                || self.base.provider.display_name().to_string(),
+                |provider| provider.display_name.clone(),
+            )
     }
 }
 
@@ -226,11 +226,16 @@ in the project.");
 mod tests {
     use std::sync::Arc;
 
+    use fabro_model::catalog::LlmCatalogSettings;
     use tokio::sync::Mutex as AsyncMutex;
 
     use super::*;
     use crate::subagent::{SessionFactory, SubAgentManager};
     use crate::test_support::MockSandbox;
+
+    fn test_catalog() -> Arc<Catalog> {
+        Arc::new(Catalog::from_builtin_with_overrides(&LlmCatalogSettings::default()).unwrap())
+    }
 
     #[test]
     fn openai_profile_identity() {
@@ -326,33 +331,41 @@ mod tests {
     }
 
     #[test]
-    fn kimi_provider_prompt_says_moonshot() {
-        let profile = OpenAiProfile::new("kimi-k2.5").with_provider(Provider::Kimi);
+    fn kimi_provider_prompt_uses_catalog_display_name() {
+        let profile = OpenAiProfile::new("kimi-k2.5")
+            .with_provider(Provider::Kimi)
+            .with_catalog(test_catalog());
         let env = MockSandbox::linux();
         let prompt = profile.build_system_prompt(&env, &EnvContext::default(), &[], None, &[]);
-        assert!(prompt.contains("powered by Moonshot"));
+        assert!(prompt.contains("powered by Kimi"));
         assert!(!prompt.contains("powered by OpenAI"));
     }
 
     #[test]
-    fn zai_provider_prompt_says_zhipu() {
-        let profile = OpenAiProfile::new("glm-4.7").with_provider(Provider::Zai);
+    fn zai_provider_prompt_uses_catalog_display_name() {
+        let profile = OpenAiProfile::new("glm-4.7")
+            .with_provider(Provider::Zai)
+            .with_catalog(test_catalog());
         let env = MockSandbox::linux();
         let prompt = profile.build_system_prompt(&env, &EnvContext::default(), &[], None, &[]);
-        assert!(prompt.contains("powered by Zhipu AI"));
+        assert!(prompt.contains("powered by Z.ai"));
     }
 
     #[test]
-    fn minimax_provider_prompt_says_minimax() {
-        let profile = OpenAiProfile::new("minimax-m2.5").with_provider(Provider::Minimax);
+    fn minimax_provider_prompt_uses_catalog_display_name() {
+        let profile = OpenAiProfile::new("minimax-m2.5")
+            .with_provider(Provider::Minimax)
+            .with_catalog(test_catalog());
         let env = MockSandbox::linux();
         let prompt = profile.build_system_prompt(&env, &EnvContext::default(), &[], None, &[]);
         assert!(prompt.contains("powered by MiniMax"));
     }
 
     #[test]
-    fn inception_provider_prompt_says_inception() {
-        let profile = OpenAiProfile::new("mercury-2").with_provider(Provider::Inception);
+    fn inception_provider_prompt_uses_catalog_display_name() {
+        let profile = OpenAiProfile::new("mercury-2")
+            .with_provider(Provider::Inception)
+            .with_catalog(test_catalog());
         let env = MockSandbox::linux();
         let prompt = profile.build_system_prompt(&env, &EnvContext::default(), &[], None, &[]);
         assert!(prompt.contains("powered by Inception"));

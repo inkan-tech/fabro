@@ -139,6 +139,28 @@ impl FabroMcpServer {
     }
 
     #[tool(
+        name = "fabro_run_pair",
+        description = "Inspect, start, message, end, or read transcript for a live Fabro run pairing session."
+    )]
+    async fn fabro_run_pair(
+        &self,
+        params: Parameters<run_tools::FabroRunPairParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let params = match run_tools::ValidatedPairRun::try_from(params.0) {
+            Ok(params) => params,
+            Err(err) => return Ok(error_result(&err)),
+        };
+        let backend = match self.backend().await {
+            Ok(backend) => backend,
+            Err(err) => return Ok(error_result(&err)),
+        };
+        match run_tools::pair_run(backend, params).await {
+            Ok(result) => success_result(&result, run_tools::pair_run_text(&result)),
+            Err(err) => Ok(error_result(&err)),
+        }
+    }
+
+    #[tool(
         name = "fabro_run_events",
         description = "List, inspect, or search stored events for a Fabro workflow run."
     )]
@@ -195,4 +217,44 @@ fn success_result<T: Serialize>(
 
 fn error_result(err: &run_tools::ToolError) -> CallToolResult {
     CallToolResult::error(vec![Content::text(err.to_string())])
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+    use std::sync::Arc;
+
+    use serde_json::Value;
+
+    use super::*;
+    use crate::FabroMcpServerSettings;
+
+    #[test]
+    fn fabro_run_pair_tool_is_registered_with_stage_based_schema() {
+        let settings = FabroMcpServerSettings {
+            cwd:            PathBuf::from("."),
+            config_path:    PathBuf::from("fabro.toml"),
+            client_factory: Arc::new(|| {
+                Box::pin(async { panic!("client should not be constructed while listing tools") })
+            }),
+        };
+        let server = FabroMcpServer::new(Arc::new(settings));
+        let tools = server.tool_router.list_all();
+        let tool = tools
+            .iter()
+            .find(|tool| tool.name.as_ref() == "fabro_run_pair")
+            .expect("fabro_run_pair should be registered");
+        let schema = Value::Object(tool.input_schema.as_ref().clone());
+        let schema_text = schema.to_string();
+
+        assert!(schema_text.contains("stage_id"));
+        assert!(!schema_text.contains("agent_session_id"));
+        assert!(!schema_text.contains("session_id"));
+        assert!(!schema_text.contains("PairTargetSelector"));
+        assert!(!schema_text.contains("\"target\""));
+        assert!(!schema_text.contains("provider"));
+        assert!(!schema_text.contains("\"model\""));
+        assert!(!schema_text.contains("\"node_id\""));
+        assert!(!schema_text.contains("\"visit\""));
+    }
 }

@@ -383,7 +383,6 @@ fn main() {
         ("PairId", "fabro_types::PairId", &[]),
         ("PairMessageId", "fabro_types::PairMessageId", &[]),
         ("PairStatus", "fabro_types::PairStatus", &[]),
-        ("PairTargetSelector", "fabro_types::PairTargetSelector", &[]),
         ("PairTarget", "fabro_types::PairTarget", &[]),
         ("PairRecord", "fabro_types::PairRecord", &[]),
         (

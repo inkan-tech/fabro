@@ -5,7 +5,10 @@ use std::sync::LazyLock;
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDate, Utc};
 use fabro_api::types;
-use fabro_types::{Run, RunId, RunStatus};
+use fabro_types::{
+    PairId, PairMessageRecord, PairMessageRequest, PairRecord, PairTranscriptResponse, Run, RunId,
+    RunPairStatusResponse, RunStatus, StageId,
+};
 use fabro_util::exit::{self, ExitClass};
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -85,6 +88,45 @@ pub trait FabroToolBackend: Send + Sync {
         question_id: &str,
         body: types::SubmitAnswerRequest,
     ) -> anyhow::Result<()>;
+
+    async fn get_run_pair_status(&self, _run_id: &RunId) -> anyhow::Result<RunPairStatusResponse> {
+        Err(ToolError::message(format!("{FABRO_RUN_PAIR_TOOL_NAME} is not available")).into())
+    }
+
+    async fn start_run_pair(
+        &self,
+        _run_id: &RunId,
+        _stage_id: StageId,
+    ) -> anyhow::Result<PairRecord> {
+        Err(ToolError::message(format!("{FABRO_RUN_PAIR_TOOL_NAME} is not available")).into())
+    }
+
+    async fn get_run_pair(&self, _run_id: &RunId, _pair_id: &PairId) -> anyhow::Result<PairRecord> {
+        Err(ToolError::message(format!("{FABRO_RUN_PAIR_TOOL_NAME} is not available")).into())
+    }
+
+    async fn end_run_pair(&self, _run_id: &RunId, _pair_id: &PairId) -> anyhow::Result<PairRecord> {
+        Err(ToolError::message(format!("{FABRO_RUN_PAIR_TOOL_NAME} is not available")).into())
+    }
+
+    async fn send_run_pair_message(
+        &self,
+        _run_id: &RunId,
+        _pair_id: &PairId,
+        _request: PairMessageRequest,
+    ) -> anyhow::Result<PairMessageRecord> {
+        Err(ToolError::message(format!("{FABRO_RUN_PAIR_TOOL_NAME} is not available")).into())
+    }
+
+    async fn get_run_pair_transcript(
+        &self,
+        _run_id: &RunId,
+        _pair_id: &PairId,
+        _since_seq: Option<u32>,
+        _limit: Option<u32>,
+    ) -> anyhow::Result<PairTranscriptResponse> {
+        Err(ToolError::message(format!("{FABRO_RUN_PAIR_TOOL_NAME} is not available")).into())
+    }
 }
 
 pub trait RunManifestBuilder: Send + Sync {
@@ -127,6 +169,7 @@ pub const FABRO_RUN_SEARCH_TOOL_NAME: &str = "fabro_run_search";
 pub const FABRO_RUN_INTERACT_TOOL_NAME: &str = "fabro_run_interact";
 pub const FABRO_RUN_GATHER_TOOL_NAME: &str = "fabro_run_gather";
 pub const FABRO_RUN_EVENTS_TOOL_NAME: &str = "fabro_run_events";
+pub const FABRO_RUN_PAIR_TOOL_NAME: &str = "fabro_run_pair";
 
 static TOOL_DEFINITIONS: LazyLock<Vec<ToolDefinition>> = LazyLock::new(|| {
     vec![

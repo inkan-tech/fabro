@@ -11,12 +11,14 @@ pub mod fabro_client;
 mod gather;
 mod interact;
 mod manifest;
+mod pair;
 mod search;
 
 pub use common::{
     FABRO_RUN_CREATE_TOOL_NAME, FABRO_RUN_EVENTS_TOOL_NAME, FABRO_RUN_GATHER_TOOL_NAME,
-    FABRO_RUN_INTERACT_TOOL_NAME, FABRO_RUN_SEARCH_TOOL_NAME, FabroToolBackend, RunManifestBuilder,
-    RunSummaryResult, ToolDefinition, ToolError, ToolResult, tool_definitions,
+    FABRO_RUN_INTERACT_TOOL_NAME, FABRO_RUN_PAIR_TOOL_NAME, FABRO_RUN_SEARCH_TOOL_NAME,
+    FabroToolBackend, RunManifestBuilder, RunSummaryResult, ToolDefinition, ToolError, ToolResult,
+    tool_definitions,
 };
 pub use create::{
     CreateRunOptions, CreateRunSpec, CreateRunsResult, CreatedRunResult, FabroRunCreateParams,
@@ -35,6 +37,10 @@ pub use interact::{
     ValidatedInteractAction, ValidatedInteractRun, interact_run, interact_run_text,
 };
 pub use manifest::json_to_toml_value;
+pub use pair::{
+    FabroRunPairParams, PairRunResult, RunPairAction, ValidatedPairAction, ValidatedPairRun,
+    pair_run, pair_run_text,
+};
 pub use search::{
     FabroRunSearchParams, SearchRunSummaryResult, SearchRunsResult, ValidatedSearchRuns,
     search_runs, search_runs_text,

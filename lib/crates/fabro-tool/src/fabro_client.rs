@@ -3,7 +3,10 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use fabro_api::types;
-use fabro_types::{EventEnvelope, Run, RunId, RunProjection};
+use fabro_types::{
+    EventEnvelope, PairId, PairMessageRecord, PairMessageRequest, PairRecord,
+    PairTranscriptResponse, Run, RunId, RunPairStatusResponse, RunProjection, StageId,
+};
 
 use crate::{FabroToolBackend, RunManifestBuilder, ToolError};
 
@@ -136,6 +139,49 @@ impl FabroToolBackend for ClientBackend {
     ) -> anyhow::Result<()> {
         self.client
             .submit_run_answer(run_id, question_id, body)
+            .await
+    }
+
+    async fn get_run_pair_status(&self, run_id: &RunId) -> anyhow::Result<RunPairStatusResponse> {
+        self.client.get_run_pair_status(run_id).await
+    }
+
+    async fn start_run_pair(
+        &self,
+        run_id: &RunId,
+        stage_id: StageId,
+    ) -> anyhow::Result<PairRecord> {
+        self.client.start_run_pair(run_id, stage_id).await
+    }
+
+    async fn get_run_pair(&self, run_id: &RunId, pair_id: &PairId) -> anyhow::Result<PairRecord> {
+        self.client.get_run_pair(run_id, pair_id).await
+    }
+
+    async fn end_run_pair(&self, run_id: &RunId, pair_id: &PairId) -> anyhow::Result<PairRecord> {
+        self.client.end_run_pair(run_id, pair_id).await
+    }
+
+    async fn send_run_pair_message(
+        &self,
+        run_id: &RunId,
+        pair_id: &PairId,
+        request: PairMessageRequest,
+    ) -> anyhow::Result<PairMessageRecord> {
+        self.client
+            .send_run_pair_message(run_id, pair_id, request)
+            .await
+    }
+
+    async fn get_run_pair_transcript(
+        &self,
+        run_id: &RunId,
+        pair_id: &PairId,
+        since_seq: Option<u32>,
+        limit: Option<u32>,
+    ) -> anyhow::Result<PairTranscriptResponse> {
+        self.client
+            .get_run_pair_transcript(run_id, pair_id, since_seq, limit)
             .await
     }
 }

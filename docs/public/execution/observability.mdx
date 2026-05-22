@@ -25,6 +25,7 @@ Event names use lowercase dot notation, for example:
 - `agent.tool.started`
 - `agent.tool.completed`
 - `sandbox.ready`
+- `todo.updated`
 - `parallel.branch.completed`
 
 ### Envelope format
@@ -92,6 +93,7 @@ Common categories include:
 | Run lifecycle | `run.started`, `run.completed`, `run.failed`, `run.notice` |
 | Stage lifecycle | `stage.started`, `stage.completed`, `stage.failed`, `stage.retrying` |
 | Agent activity | `agent.message`, `agent.tool.started`, `agent.warning`, `agent.sub.spawned` |
+| Agent todo state | `todo.created`, `todo.updated`, `todo.deleted` |
 | Routing | `edge.selected`, `loop.restart`, `parallel.started` |
 | Git and checkpoints | `checkpoint.completed`, `git.commit`, `git.push` |
 | Setup and sandbox | `sandbox.initializing`, `sandbox.ready`, `setup.started` |

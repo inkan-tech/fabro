@@ -2103,8 +2103,8 @@ paths:
       description: >
         Creates a fresh run from the failed or dead source run's captured
         durable definition, records `retried_from` on the new run, and schedules
-        it for execution. The source run is left unchanged. Cancelled, active,
-        succeeded, and archived runs are not retryable.
+        it for execution. The source run is left unchanged. Active, succeeded,
+        and archived runs are not retryable.
       parameters:
         - $ref: "#/components/parameters/RunId"
       responses:

@@ -427,10 +427,10 @@ describe("run lifecycle actions", () => {
     expect(canApprove(makeRun({ kind: "runnable" }))).toBe(false);
   });
 
-  test("canRetry allows failed and dead runs except cancelled or archived runs", () => {
+  test("canRetry allows failed (including cancelled) and dead runs except archived runs", () => {
     expect(canRetry(makeRun({ kind: "failed", reason: "workflow_error" }))).toBe(true);
     expect(canRetry(makeRun({ kind: "dead" }))).toBe(true);
-    expect(canRetry(makeRun({ kind: "failed", reason: "cancelled" }))).toBe(false);
+    expect(canRetry(makeRun({ kind: "failed", reason: "cancelled" }))).toBe(true);
     expect(canRetry(makeRun({ kind: "succeeded", reason: "completed" }))).toBe(false);
     expect(canRetry(makeRun({ kind: "running" }))).toBe(false);
     expect(canRetry(makeRun({ kind: "failed", reason: "workflow_error" }, true))).toBe(false);

@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use fabro_store::Database;
-use fabro_types::{FailureReason, RunId, RunProvenance, RunSpec, RunStatus};
+use fabro_types::{RunId, RunProvenance, RunSpec, RunStatus};
 
 use super::archive::ensure_not_archived;
 use super::run_store::map_open_run_error;
@@ -102,11 +102,6 @@ pub async fn retry_run(
 
 fn ensure_retryable(status: RunStatus, run_id: &RunId) -> std::result::Result<(), Error> {
     match status {
-        RunStatus::Failed {
-            reason: FailureReason::Cancelled,
-        } => Err(Error::Precondition(format!(
-            "run {run_id} was cancelled and cannot be retried"
-        ))),
         RunStatus::Failed { .. } | RunStatus::Dead => Ok(()),
         other => Err(Error::Precondition(format!(
             "run {run_id} cannot be retried from status {other}; expected failed or dead"
@@ -122,9 +117,9 @@ mod tests {
 
     use fabro_store::{Database, RunProjectionReducer};
     use fabro_types::{
-        AuthMethod, DirtyStatus, ForkSourceRef, GitContext, Graph, IdpIdentity, PreRunPushOutcome,
-        Principal, PullRequestLink, RunBlobId, RunRunnableSource, RunServerProvenance, RunTiming,
-        UserPrincipal, WorkflowSettings, fixtures,
+        AuthMethod, DirtyStatus, FailureReason, ForkSourceRef, GitContext, Graph, IdpIdentity,
+        PreRunPushOutcome, Principal, PullRequestLink, RunBlobId, RunRunnableSource,
+        RunServerProvenance, RunTiming, UserPrincipal, WorkflowSettings, fixtures,
     };
     use object_store::memory::InMemory;
 
@@ -460,12 +455,7 @@ mod tests {
         .await
         .unwrap();
 
-        let cancelled = fixtures::RUN_3;
-        let cancelled_store = store.create_run(&cancelled).await.unwrap();
-        append_created(&cancelled_store, cancelled, None, None).await;
-        append_failed(&cancelled_store, cancelled, FailureReason::Cancelled).await;
-
-        let archived = fixtures::RUN_4;
+        let archived = fixtures::RUN_3;
         let archived_store = store.create_run(&archived).await.unwrap();
         append_created(&archived_store, archived, None, None).await;
         append_failed(&archived_store, archived, FailureReason::WorkflowError).await;
@@ -475,7 +465,7 @@ mod tests {
         .await
         .unwrap();
 
-        for run_id in [succeeded, active, cancelled, archived] {
+        for run_id in [succeeded, active, archived] {
             let err = retry_run(&store, &RetryRunInput {
                 source_run_id: run_id,
                 new_run_id:    RunId::new(),
@@ -512,5 +502,16 @@ mod tests {
     #[test]
     fn dead_status_is_retryable() {
         ensure_retryable(RunStatus::Dead, &fixtures::RUN_1).unwrap();
+    }
+
+    #[test]
+    fn cancelled_status_is_retryable() {
+        ensure_retryable(
+            RunStatus::Failed {
+                reason: FailureReason::Cancelled,
+            },
+            &fixtures::RUN_1,
+        )
+        .unwrap();
     }
 }

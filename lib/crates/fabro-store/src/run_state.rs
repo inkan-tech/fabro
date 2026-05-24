@@ -497,27 +497,18 @@ impl RunProjectionReducer for RunProjection {
                 stage.parallel_results = Some(parallel_results);
             }
             EventBody::TodoCreated(props) => {
-                if !should_project_stage_todo_event(stored, props.list_kind) {
-                    return Ok(());
-                }
                 let Some(stage) = stage_at_stored_or_current_visit(self, stored, event.seq) else {
                     return Ok(());
                 };
-                apply_todo_created(stage, props);
+                apply_todo_created(stage, props, stored.parent_session_id.as_deref());
             }
             EventBody::TodoUpdated(props) => {
-                if !should_project_stage_todo_event(stored, props.list_kind) {
-                    return Ok(());
-                }
                 let Some(stage) = stage_at_stored_or_current_visit(self, stored, event.seq) else {
                     return Ok(());
                 };
                 apply_todo_updated(stage, props);
             }
             EventBody::TodoDeleted(props) => {
-                if !should_project_stage_todo_event(stored, props.list_kind) {
-                    return Ok(());
-                }
                 let Some(stage) = stage_at_stored_or_current_visit(self, stored, event.seq) else {
                     return Ok(());
                 };
@@ -641,21 +632,25 @@ impl RunProjectionReducer for RunProjection {
     }
 }
 
-/// Decide whether a TODO event should mutate `StageProjection.todos`.
-///
-/// OpenAI plan lists are scoped per agent session (`openai_plan:<session_id>`),
-/// so a child/subagent session emits its own list events on the same stage.
-/// The stage sidebar represents the root stage agent, so we drop child OpenAI
-/// plan events here to keep the projection on the root session's list.
-/// Anthropic task lists are root-scoped (`anthropic_tasks:<root_session_id>`)
-/// and intentionally shared with subagents, so they always project.
-fn should_project_stage_todo_event(stored: &RunEvent, list_kind: TodoListKind) -> bool {
-    let is_child_openai_plan_event =
-        matches!(list_kind, TodoListKind::OpenAiPlan) && stored.parent_session_id.is_some();
-    !is_child_openai_plan_event
-}
-
-fn apply_todo_created(stage: &mut StageProjection, props: &TodoCreatedProps) {
+fn apply_todo_created(
+    stage: &mut StageProjection,
+    props: &TodoCreatedProps,
+    parent_session_id: Option<&str>,
+) {
+    // OpenAI plan lists are scoped per agent session (`openai_plan:<session_id>`).
+    // A child subagent must not displace a different list already in the slot
+    // (which would clobber the root agent's plan); but it may create the slot
+    // when empty, or extend its own list. Anthropic task lists are root-scoped
+    // and pass through unchanged.
+    if matches!(props.list_kind, TodoListKind::OpenAiPlan)
+        && parent_session_id.is_some()
+        && stage
+            .todos
+            .as_ref()
+            .is_some_and(|list| list.list_id != props.list_id)
+    {
+        return;
+    }
     if stage
         .todos
         .as_ref()
@@ -4280,28 +4275,50 @@ mod tests {
         }
 
         #[test]
-        fn child_openai_plan_events_do_not_create_stage_todos() {
+        fn child_openai_plan_projects_when_no_root_plan_exists() {
+            // Regression: when a stage's root agent never calls update_plan but
+            // a subagent does, the subagent's plan must still surface in
+            // StageProjection.todos. Observed on run 01KSDXK5DJ61CFCK9YSDR8AETQ
+            // (implement@1), where a gpt-5.5 root delegated to a subagent that
+            // owned the only plan list — and the sidebar showed no todos.
             let mut state = initialized_projection();
             let stage_id = stage_id();
+            let child_list = "openai_plan:child_session";
             state
                 .apply_event(&child_stage_event(
                     1,
-                    created(
-                        "openai_plan:child_session",
+                    created(child_list, TodoListKind::OpenAiPlan, "c-a", 0, "first"),
+                    stage_id.clone(),
+                ))
+                .unwrap();
+            state
+                .apply_event(&child_stage_event(
+                    2,
+                    created(child_list, TodoListKind::OpenAiPlan, "c-b", 1, "second"),
+                    stage_id.clone(),
+                ))
+                .unwrap();
+            state
+                .apply_event(&child_stage_event(
+                    3,
+                    updated_status(
+                        child_list,
                         TodoListKind::OpenAiPlan,
-                        "child-a",
-                        0,
-                        "child first",
+                        "c-a",
+                        TodoStatus::Completed,
                     ),
                     stage_id.clone(),
                 ))
                 .unwrap();
 
-            assert!(
-                state
-                    .stage(&stage_id)
-                    .is_none_or(|stage| stage.todos.is_none())
-            );
+            let projection = stage_todos(&state, &stage_id);
+            assert_eq!(projection.list_id, child_list);
+            assert_eq!(projection.kind, TodoListKind::OpenAiPlan);
+            assert_eq!(projection.items.len(), 2);
+            assert_eq!(projection.items[0].id, "c-a");
+            assert_eq!(projection.items[0].status, TodoStatus::Completed);
+            assert_eq!(projection.items[1].id, "c-b");
+            assert_eq!(projection.items[1].status, TodoStatus::Pending);
         }
 
         #[test]

@@ -516,13 +516,13 @@ function SkillSourceIcon({ source }: { source: ActivatedSkill["source"] }) {
 function AgentToolsSection({ tools }: { tools: AgentToolSummary[] }) {
   if (tools.length === 0) return <p className="text-xs text-fg-muted">No tools reported.</p>;
   return (
-    <ul role="list" className="space-y-1">
+    <ul role="list" className="space-y-1.5">
       {tools.map((tool) => {
         const nameClass = tool.invoked
           ? "min-w-0 flex-1 truncate text-xs text-fg-2"
           : "min-w-0 flex-1 truncate text-xs text-fg-muted";
         return (
-          <li key={tool.name} className="flex items-center gap-1.5">
+          <li key={tool.name} title={tool.description} className="flex items-center gap-1.5">
             {tool.invoked ? (
               <CheckCircleIcon className="size-3.5 shrink-0 text-mint" aria-label="Used" />
             ) : (

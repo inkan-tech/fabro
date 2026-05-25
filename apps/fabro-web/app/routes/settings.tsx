@@ -1,12 +1,12 @@
 import {
   BoltIcon,
+  ChartBarSquareIcon,
   CircleStackIcon,
   Cog6ToothIcon,
   CpuChipIcon,
   CubeTransparentIcon,
   KeyIcon,
   PuzzlePieceIcon,
-  ServerStackIcon,
   ShieldCheckIcon,
 } from "@heroicons/react/24/outline";
 import { Link, Outlet, useLocation, useMatches } from "react-router";
@@ -25,28 +25,19 @@ type NavItem = {
   match: (pathname: string) => boolean;
 };
 
+type NavSection = { type: "section"; key: string; label: string };
+
 type NavDivider = { type: "divider"; key: string };
 
-type NavEntry = NavItem | NavDivider;
+type NavEntry = NavItem | NavSection | NavDivider;
 
 const navItems: NavEntry[] = [
-  {
-    name: "General",
-    href: "/settings",
-    icon: Cog6ToothIcon,
-    match: (p) => p === "/settings",
-  },
+  { type: "section", key: "general", label: "General" },
   {
     name: "Models",
     href: "/settings/models",
     icon: CpuChipIcon,
-    match: (p) => p.startsWith("/settings/models"),
-  },
-  {
-    name: "Sandboxes",
-    href: "/settings/sandboxes",
-    icon: CubeTransparentIcon,
-    match: (p) => p.startsWith("/settings/sandboxes"),
+    match: (p) => p === "/settings" || p.startsWith("/settings/models"),
   },
   {
     name: "Integrations",
@@ -55,10 +46,10 @@ const navItems: NavEntry[] = [
     match: (p) => p.startsWith("/settings/integrations"),
   },
   {
-    name: "Secrets",
-    href: "/settings/secrets",
-    icon: KeyIcon,
-    match: (p) => p.startsWith("/settings/secrets"),
+    name: "Sandboxes",
+    href: "/settings/sandboxes",
+    icon: CubeTransparentIcon,
+    match: (p) => p.startsWith("/settings/sandboxes"),
   },
   {
     name: "Security",
@@ -67,18 +58,31 @@ const navItems: NavEntry[] = [
     match: (p) => p.startsWith("/settings/security"),
   },
   {
+    name: "Secrets",
+    href: "/settings/secrets",
+    icon: KeyIcon,
+    match: (p) => p.startsWith("/settings/secrets"),
+  },
+  { type: "section", key: "administration", label: "Administration" },
+  {
+    name: "Server",
+    href: "/settings/server",
+    icon: Cog6ToothIcon,
+    match: (p) => p.startsWith("/settings/server"),
+  },
+  {
     name: "Storage",
     href: "/settings/storage",
     icon: CircleStackIcon,
     match: (p) => p.startsWith("/settings/storage"),
   },
   {
-    name: "Resources",
-    href: "/settings/resources",
-    icon: ServerStackIcon,
-    match: (p) => p.startsWith("/settings/resources"),
+    name: "Monitoring",
+    href: "/settings/monitoring",
+    icon: ChartBarSquareIcon,
+    match: (p) => p.startsWith("/settings/monitoring"),
   },
-  { type: "divider", key: "after-storage" },
+  { type: "divider", key: "after-administration" },
   {
     name: "Live Events",
     href: "/settings/live-events",
@@ -88,7 +92,7 @@ const navItems: NavEntry[] = [
 ];
 
 function isLink(entry: NavEntry): entry is NavItem {
-  return entry.type !== "divider";
+  return entry.type !== "divider" && entry.type !== "section";
 }
 
 function classNames(...classes: Array<string | false | null | undefined>) {
@@ -115,7 +119,7 @@ export default function SettingsLayout() {
         <nav className="sticky top-6">
           <ul role="list" className="flex gap-1 overflow-x-auto lg:flex-col lg:gap-0.5">
             {navItems.map((entry) => {
-              if (!isLink(entry)) {
+              if (entry.type === "divider") {
                 return (
                   <li
                     key={entry.key}
@@ -123,6 +127,16 @@ export default function SettingsLayout() {
                     aria-orientation="vertical"
                     className="mx-1 self-stretch border-l border-line lg:mx-0 lg:my-2 lg:self-auto lg:border-l-0 lg:border-t"
                   />
+                );
+              }
+              if (entry.type === "section") {
+                return (
+                  <li
+                    key={entry.key}
+                    className="hidden lg:block lg:px-2.5 lg:pt-4 lg:pb-1 lg:text-xs lg:font-medium lg:uppercase lg:tracking-wider lg:text-fg-muted first:lg:pt-0"
+                  >
+                    {entry.label}
+                  </li>
                 );
               }
               const current = entry.match(pathname);

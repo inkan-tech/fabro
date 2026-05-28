@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use axum::Json;
 use axum::extract::rejection::JsonRejection;
 use axum::http::StatusCode;
@@ -99,7 +101,7 @@ impl ResponsesRequest {
         )?;
         validate_tool_choice_requires_tools(self.tool_choice.as_ref(), self.tools.as_ref())?;
         validate_stop(self.stop.as_ref(), "stop")?;
-        validate_response_input(&self.input)?;
+        validate_response_input(&self.input, self.previous_response_id.as_deref())?;
 
         Ok(())
     }
@@ -223,13 +225,36 @@ impl ContentPart {
     }
 }
 
-fn validate_response_input(input: &ResponseInput) -> Result<(), OpenAiError> {
+fn validate_response_input(
+    input: &ResponseInput,
+    previous_response_id: Option<&str>,
+) -> Result<(), OpenAiError> {
     let ResponseInput::Items(items) = input else {
         return Ok(());
     };
 
+    let mut function_call_ids = HashSet::new();
     for item in items {
         validate_input_item(item)?;
+        match item.item_type.as_deref() {
+            Some("function_call" | "custom_tool_call") => {
+                if let Some(call_id) = item.call_id.as_deref().filter(|id| !id.is_empty()) {
+                    function_call_ids.insert(call_id);
+                }
+            }
+            Some("function_call_output") if previous_response_id.is_none() => {
+                let call_id = item.call_id.as_deref().unwrap_or_default();
+                if !function_call_ids.contains(call_id) {
+                    return Err(OpenAiError::invalid_request(
+                        "input",
+                        &format!(
+                            "No tool call found for function call output with call_id {call_id}."
+                        ),
+                    ));
+                }
+            }
+            _ => {}
+        }
     }
 
     Ok(())

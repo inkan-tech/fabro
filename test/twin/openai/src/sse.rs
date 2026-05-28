@@ -227,6 +227,11 @@ pub fn responses_sse_response(plan: &ResponsePlan, transport: TransportOptions) 
                     "created": plan.created,
                     "model": plan.model,
                     "status": "completed",
+                    "usage": {
+                        "input_tokens": plan.input_tokens,
+                        "output_tokens": plan.output_tokens,
+                        "total_tokens": plan.input_tokens + plan.output_tokens,
+                    },
                 },
             }),
         ));

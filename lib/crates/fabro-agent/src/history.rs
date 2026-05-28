@@ -41,7 +41,8 @@ impl History {
         if self.turns.len() <= preserve_count {
             return;
         }
-        let mut preserved = self.turns.split_off(self.turns.len() - preserve_count);
+        let preserve_start = compact_preserve_start(&self.turns, preserve_count);
+        let mut preserved = self.turns.split_off(preserve_start);
         Self::invalidate_preserved_usage(&mut preserved);
         let discarded = std::mem::take(&mut self.turns);
         let extracted_user_messages =
@@ -165,6 +166,32 @@ fn extract_recent_user_messages(discarded: Vec<Message>, token_budget: usize) ->
         .collect()
 }
 
+fn compact_preserve_start(turns: &[Message], preserve_count: usize) -> usize {
+    let mut start = turns.len().saturating_sub(preserve_count);
+
+    loop {
+        let mut required_call_ids = Vec::new();
+        for turn in &turns[start..] {
+            if let Message::ToolResults { results, .. } = turn {
+                required_call_ids.extend(results.iter().map(|result| result.tool_call_id.as_str()));
+            }
+        }
+
+        let Some(call_index) = turns[..start].iter().rposition(|turn| {
+            let Message::Assistant { tool_calls, .. } = turn else {
+                return false;
+            };
+            tool_calls
+                .iter()
+                .any(|tool_call| required_call_ids.contains(&tool_call.id.as_str()))
+        }) else {
+            return start;
+        };
+
+        start = call_index;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::SystemTime;
@@ -221,6 +248,63 @@ mod tests {
         assert!(matches!(&turns[6], Message::User { content, .. } if content == "msg 5"));
         assert!(matches!(&turns[7], Message::User { content, .. } if content == "msg 6"));
         assert!(matches!(&turns[8], Message::User { content, .. } if content == "msg 7"));
+    }
+
+    #[test]
+    fn compact_preserves_matching_tool_calls_for_preserved_tool_results() {
+        let mut history = History::default();
+        history.push(Message::User {
+            content:   "old msg".into(),
+            timestamp: SystemTime::now(),
+        });
+        for index in 0..3 {
+            let call_id = format!("call_{index}");
+            history.push(Message::Assistant {
+                content:        String::new(),
+                tool_calls:     vec![ToolCall::new(
+                    &call_id,
+                    "read_file",
+                    serde_json::json!({ "file_path": format!("{index}.txt") }),
+                )],
+                provider_parts: vec![],
+                usage:          Box::new(TokenCounts::default()),
+                response_id:    format!("resp_{index}"),
+                timestamp:      SystemTime::now(),
+            });
+            history.push(Message::ToolResults {
+                results:   vec![ToolResult::success(&call_id, serde_json::json!("ok"))],
+                timestamp: SystemTime::now(),
+            });
+        }
+        history.push(Message::Assistant {
+            content:        String::new(),
+            tool_calls:     vec![ToolCall::new(
+                "call_3",
+                "read_file",
+                serde_json::json!({ "file_path": "3.txt" }),
+            )],
+            provider_parts: vec![],
+            usage:          Box::new(TokenCounts::default()),
+            response_id:    "resp_3".into(),
+            timestamp:      SystemTime::now(),
+        });
+
+        history.compact(6, "Summary".into());
+        let messages = history.convert_to_messages();
+        let mut seen_tool_calls = Vec::new();
+        for message in messages {
+            for part in message.content {
+                match part {
+                    ContentPart::ToolCall(tool_call) => seen_tool_calls.push(tool_call.id),
+                    ContentPart::ToolResult(result) => assert!(
+                        seen_tool_calls.contains(&result.tool_call_id),
+                        "tool result {} should have a matching preserved tool call",
+                        result.tool_call_id
+                    ),
+                    _ => {}
+                }
+            }
+        }
     }
 
     #[test]

@@ -35,6 +35,8 @@ pub enum ScenarioScript {
         reasoning:               Option<Vec<String>>,
         structured_output:       Option<Value>,
         tool_calls:              Option<Vec<ToolCallTemplate>>,
+        input_tokens:            Option<u64>,
+        output_tokens:           Option<u64>,
         delay_before_headers_ms: Option<u64>,
         inter_event_delay_ms:    Option<u64>,
         close_after_chunks:      Option<usize>,
@@ -123,6 +125,8 @@ impl Scenario {
                 reasoning,
                 structured_output,
                 tool_calls,
+                input_tokens,
+                output_tokens,
                 delay_before_headers_ms,
                 inter_event_delay_ms,
                 close_after_chunks,
@@ -136,6 +140,8 @@ impl Scenario {
                     reasoning.clone().unwrap_or_default(),
                     structured_output.clone(),
                     tool_calls.clone().unwrap_or_default(),
+                    *input_tokens,
+                    *output_tokens,
                 ),
                 transport: TransportOptions {
                     delay_before_headers_ms: delay_before_headers_ms.unwrap_or_default(),
@@ -178,6 +184,8 @@ impl Scenario {
                 reasoning,
                 structured_output,
                 tool_calls,
+                input_tokens,
+                output_tokens,
                 delay_before_headers_ms,
                 inter_event_delay_ms,
                 close_after_chunks,
@@ -191,6 +199,8 @@ impl Scenario {
                     reasoning.clone().unwrap_or_default(),
                     structured_output.clone(),
                     tool_calls.clone().unwrap_or_default(),
+                    *input_tokens,
+                    *output_tokens,
                 ),
                 transport: TransportOptions {
                     delay_before_headers_ms: delay_before_headers_ms.unwrap_or_default(),
@@ -231,6 +241,8 @@ fn build_plan_from_script(
     reasoning: Vec<String>,
     structured_output: Option<Value>,
     tool_calls: Vec<ToolCallTemplate>,
+    input_tokens: Option<u64>,
+    output_tokens: Option<u64>,
 ) -> ResponsePlan {
     let output_text = match response_text {
         Some(response_text) => response_text,
@@ -257,7 +269,7 @@ fn build_plan_from_script(
                 arguments: tool_call.arguments,
             })
             .collect(),
-        input_tokens: 1,
-        output_tokens: 5,
+        input_tokens: input_tokens.unwrap_or(1),
+        output_tokens: output_tokens.unwrap_or(5),
     }
 }

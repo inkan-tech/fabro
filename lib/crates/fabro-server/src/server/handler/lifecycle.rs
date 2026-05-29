@@ -67,7 +67,7 @@ async fn start_run(
     }
 }
 
-async fn queue_run_start(
+pub(super) async fn queue_run_start(
     state: &AppState,
     id: RunId,
     resume: bool,

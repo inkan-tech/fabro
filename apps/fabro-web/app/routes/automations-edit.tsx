@@ -1,17 +1,20 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router";
+import { Link, useNavigate, useParams } from "react-router";
 import { useSWRConfig } from "swr";
 import { ChevronRightIcon } from "@heroicons/react/20/solid";
+import type { Automation } from "@qltysh/fabro-api-client";
 
 import { ApiError, apiData, automationsApi } from "../lib/api-client";
+import { useAutomation } from "../lib/queries";
 import { queryKeys } from "../lib/query-keys";
 import {
   AutomationFormFields,
-  EMPTY_AUTOMATION_FORM,
+  automationToFormValues,
   isFormValid,
   triggersFromFormValues,
   type AutomationFormValues,
 } from "../components/automation-form";
+import { Panel, PanelSkeleton } from "../components/settings-panel";
 import {
   ErrorMessage,
   PRIMARY_BUTTON_CLASS,
@@ -20,16 +23,52 @@ import {
 import { useToast } from "../components/toast";
 
 export function meta() {
-  return [{ title: "New automation — Fabro" }];
+  return [{ title: "Edit automation — Fabro" }];
 }
 
 export const handle = { hideHeader: true };
 
-export default function AutomationsNew() {
+export default function AutomationsEdit() {
+  const { id } = useParams<{ id: string }>();
+  const query = useAutomation(id);
+
+  return (
+    <div className="space-y-6">
+      <PageHeader id={id ?? ""} name={query.data?.name} />
+      {query.data ? (
+        <EditAutomationForm key={query.data.id} automation={query.data} />
+      ) : query.error ? (
+        <Panel title="Automation">
+          <div className="px-4 py-6 text-sm text-fg-2">
+            Couldn&apos;t load this automation. It may have been deleted.
+          </div>
+        </Panel>
+      ) : (
+        <PanelSkeleton />
+      )}
+    </div>
+  );
+}
+
+function PageHeader({ id, name }: { id: string; name: string | undefined }) {
+  return (
+    <nav className="flex items-center gap-1 text-sm text-fg-muted">
+      <Link to="/automations" className="text-fg-3 hover:text-fg">
+        Automations
+      </Link>
+      <ChevronRightIcon className="size-3" aria-hidden="true" />
+      <span>{name ?? id}</span>
+    </nav>
+  );
+}
+
+function EditAutomationForm({ automation }: { automation: Automation }) {
   const navigate = useNavigate();
   const { mutate } = useSWRConfig();
   const toast = useToast();
-  const [values, setValues] = useState<AutomationFormValues>(EMPTY_AUTOMATION_FORM);
+  const [values, setValues] = useState<AutomationFormValues>(
+    automationToFormValues(automation),
+  );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -43,8 +82,7 @@ export default function AutomationsNew() {
     const trimmedName = values.name.trim();
     try {
       await apiData(() =>
-        automationsApi.createAutomation({
-          id:          values.id.trim(),
+        automationsApi.replaceAutomation(automation.id, automation.revision, {
           name:        trimmedName,
           description: values.description.trim() || null,
           enabled:     values.enabled,
@@ -57,13 +95,14 @@ export default function AutomationsNew() {
         }),
       );
       await mutate(queryKeys.automations.list());
-      toast.push({ message: `Automation “${trimmedName}” created.` });
+      await mutate(queryKeys.automations.detail(automation.id));
+      toast.push({ message: `Automation “${trimmedName}” updated.` });
       navigate("/automations");
     } catch (cause) {
       setError(
         cause instanceof ApiError && cause.message
           ? cause.message
-          : "Couldn't create the automation. Please try again.",
+          : "Couldn't update the automation. Please try again.",
       );
       setSubmitting(false);
     }
@@ -71,9 +110,7 @@ export default function AutomationsNew() {
 
   return (
     <form onSubmit={onSubmit} className="space-y-6">
-      <PageHeader />
-
-      <AutomationFormFields values={values} onChange={setValues} />
+      <AutomationFormFields values={values} onChange={setValues} lockIdAndTarget />
 
       {error ? <ErrorMessage message={error} /> : null}
 
@@ -83,25 +120,6 @@ export default function AutomationsNew() {
         onCancel={() => navigate("/automations")}
       />
     </form>
-  );
-}
-
-function PageHeader() {
-  return (
-    <div>
-      <nav className="mb-4 flex items-center gap-1 text-sm text-fg-muted">
-        <Link to="/automations" className="text-fg-3 hover:text-fg">
-          Automations
-        </Link>
-        <ChevronRightIcon className="size-3" aria-hidden="true" />
-        <span>New automation</span>
-      </nav>
-      <h2 className="text-xl font-semibold text-fg">New automation</h2>
-      <p className="mt-2 max-w-prose text-sm leading-relaxed text-fg-3">
-        Define a workflow that Fabro can run on demand, on a schedule, or via the API.
-        You can refine the graph and per-stage prompts after it's created.
-      </p>
-    </div>
   );
 }
 
@@ -125,7 +143,7 @@ function FormFooter({
         Cancel
       </button>
       <button type="submit" disabled={!canSubmit} className={PRIMARY_BUTTON_CLASS}>
-        {submitting ? "Creating…" : "Create automation"}
+        {submitting ? "Saving…" : "Save changes"}
       </button>
     </div>
   );

@@ -14,7 +14,7 @@ mod completions;
 mod environments;
 pub(in crate::server) mod events;
 pub(in crate::server) mod graph;
-mod lifecycle;
+pub(in crate::server) mod lifecycle;
 mod models;
 mod pair;
 mod pull_requests;

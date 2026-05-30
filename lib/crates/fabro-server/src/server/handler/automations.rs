@@ -6,7 +6,6 @@ use chrono::Utc;
 use fabro_automation::{
     Automation, AutomationDraft, AutomationId, AutomationReplace, AutomationStoreError,
 };
-use fabro_config::Storage;
 use fabro_types::{AutomationRef, RunId};
 use serde::Serialize;
 
@@ -140,16 +139,13 @@ async fn create_automation_run(
     let api_trigger_id = api_trigger.id.to_string();
 
     let run_id = RunId::new();
-    let temp_root = Storage::new(state.server_storage_dir())
-        .scratch_dir()
-        .join("automations");
     let materialized = match state
         .materialize_automation_run(AutomationRunMaterializeInput {
             automation_id: automation.id.clone(),
             target: automation.target.clone(),
             run_id,
             user_settings_path: state.active_config_path().to_path_buf(),
-            temp_root,
+            temp_root: state.automation_temp_root(),
         })
         .await
     {
@@ -203,6 +199,7 @@ async fn create_automation(
     Json(draft): Json<AutomationDraft>,
 ) -> Result<Response, ApiError> {
     let automation = state.automation_store().create(draft).await?;
+    state.notify_automation_scheduler();
     Ok((StatusCode::CREATED, Json(automation)).into_response())
 }
 
@@ -231,6 +228,7 @@ async fn replace_automation(
         .automation_store()
         .replace(&id, &expected, replacement)
         .await?;
+    state.notify_automation_scheduler();
     Ok(automation_with_etag_response(StatusCode::OK, automation))
 }
 
@@ -243,6 +241,7 @@ async fn delete_automation(
     let id = parse_path_id(id)?;
     let expected = parse_required_if_match(&headers, "automation", &id)?;
     state.automation_store().delete(&id, &expected).await?;
+    state.notify_automation_scheduler();
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 

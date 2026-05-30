@@ -350,18 +350,12 @@ mod tests {
         })
     }
 
-    fn automation(
-        id: &str,
-        name: &str,
-        enabled: bool,
-        triggers: Vec<AutomationTrigger>,
-    ) -> Automation {
+    fn automation(id: &str, name: &str, triggers: Vec<AutomationTrigger>) -> Automation {
         Automation {
             id: AutomationId::new(id).expect("test automation id should be valid"),
             revision: AutomationRevision::from_bytes(format!("{id}:{name}").as_bytes()),
             name: name.to_string(),
             description: None,
-            enabled,
             target: target(),
             triggers,
         }
@@ -371,7 +365,6 @@ mod tests {
         state: &AppState,
         id: &str,
         name: &str,
-        enabled: bool,
         triggers: Vec<AutomationTrigger>,
     ) -> Automation {
         state
@@ -380,7 +373,6 @@ mod tests {
                 id: AutomationId::new(id).expect("test automation id should be valid"),
                 name: name.to_string(),
                 description: None,
-                enabled,
                 target: target(),
                 triggers,
             })
@@ -451,7 +443,7 @@ mod tests {
     #[test]
     fn new_cursor_starts_at_next_future_occurrence_without_backfill() {
         let now = dt("2026-05-29T00:00:30Z");
-        let automation = automation("nightly", "Nightly", true, vec![schedule_trigger(
+        let automation = automation("nightly", "Nightly", vec![schedule_trigger(
             "schedule",
             "* * * * *",
             true,
@@ -467,7 +459,7 @@ mod tests {
 
     #[test]
     fn due_cursor_is_returned_once_and_advanced_beyond_now() {
-        let automation = automation("nightly", "Nightly", true, vec![schedule_trigger(
+        let automation = automation("nightly", "Nightly", vec![schedule_trigger(
             "schedule",
             "* * * * *",
             true,
@@ -487,8 +479,8 @@ mod tests {
     }
 
     #[test]
-    fn disabled_automation_and_disabled_schedule_trigger_remove_cursors() {
-        let mut automation = automation("nightly", "Nightly", true, vec![schedule_trigger(
+    fn disabled_schedule_trigger_removes_cursor() {
+        let mut automation = automation("nightly", "Nightly", vec![schedule_trigger(
             "schedule",
             "* * * * *",
             true,
@@ -497,13 +489,6 @@ mod tests {
         planner.reconcile(std::slice::from_ref(&automation), prime_time());
         assert_eq!(planner.cursors.len(), 1);
 
-        automation.enabled = false;
-        planner.reconcile(std::slice::from_ref(&automation), first_due_time());
-        assert!(planner.cursors.is_empty());
-
-        automation.enabled = true;
-        planner.reconcile(std::slice::from_ref(&automation), first_due_time());
-        assert_eq!(planner.cursors.len(), 1);
         automation.triggers = vec![schedule_trigger("schedule", "* * * * *", false)];
         planner.reconcile(std::slice::from_ref(&automation), first_due_time());
         assert!(planner.cursors.is_empty());
@@ -511,7 +496,7 @@ mod tests {
 
     #[test]
     fn replacing_automation_revision_or_expression_resets_cursor() {
-        let mut automation = automation("nightly", "Nightly", true, vec![schedule_trigger(
+        let mut automation = automation("nightly", "Nightly", vec![schedule_trigger(
             "schedule",
             "* * * * *",
             true,
@@ -535,7 +520,7 @@ mod tests {
 
     #[test]
     fn multiple_schedule_triggers_on_one_automation_have_independent_cursors() {
-        let automation = automation("nightly", "Nightly", true, vec![
+        let automation = automation("nightly", "Nightly", vec![
             schedule_trigger("every_minute", "* * * * *", true),
             schedule_trigger("every_five", "*/5 * * * *", true),
         ]);
@@ -558,7 +543,7 @@ mod tests {
 
     #[test]
     fn sleep_duration_uses_nearest_due_time_capped_at_thirty_seconds() {
-        let automation = automation("nightly", "Nightly", true, vec![schedule_trigger(
+        let automation = automation("nightly", "Nightly", vec![schedule_trigger(
             "schedule",
             "* * * * *",
             true,
@@ -580,7 +565,7 @@ mod tests {
     async fn due_schedule_only_automation_creates_started_run_with_automation_metadata() {
         let materializer = succeeding_materializer();
         let state = test_state_with_materializer(materializer);
-        create_automation(state.as_ref(), "nightly", "Nightly", true, vec![
+        create_automation(state.as_ref(), "nightly", "Nightly", vec![
             schedule_trigger("schedule", "* * * * *", true),
         ])
         .await;
@@ -611,13 +596,9 @@ mod tests {
     async fn schedule_only_automation_fires_without_api_trigger() {
         let materializer = succeeding_materializer();
         let state = test_state_with_materializer(materializer);
-        create_automation(
-            state.as_ref(),
-            "schedule-only",
-            "Schedule only",
-            true,
-            vec![schedule_trigger("schedule", "* * * * *", true)],
-        )
+        create_automation(state.as_ref(), "schedule-only", "Schedule only", vec![
+            schedule_trigger("schedule", "* * * * *", true),
+        ])
         .await;
         let mut planner = AutomationSchedulePlanner::default();
 
@@ -628,22 +609,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn disabled_automation_and_disabled_schedule_trigger_do_not_create_runs() {
+    async fn disabled_schedule_trigger_does_not_create_run() {
         let materializer = succeeding_materializer();
         let state = test_state_with_materializer(materializer);
         create_automation(
             state.as_ref(),
-            "disabled-automation",
-            "Disabled automation",
-            false,
-            vec![schedule_trigger("schedule", "* * * * *", true)],
-        )
-        .await;
-        create_automation(
-            state.as_ref(),
             "disabled-trigger",
             "Disabled trigger",
-            true,
             vec![schedule_trigger("schedule", "* * * * *", false)],
         )
         .await;
@@ -659,7 +631,7 @@ mod tests {
     async fn multiple_due_triggers_create_multiple_runs() {
         let materializer = succeeding_materializer();
         let state = test_state_with_materializer(materializer);
-        create_automation(state.as_ref(), "nightly", "Nightly", true, vec![
+        create_automation(state.as_ref(), "nightly", "Nightly", vec![
             schedule_trigger("first", "* * * * *", true),
             schedule_trigger("second", "* * * * *", true),
         ])
@@ -682,7 +654,7 @@ mod tests {
     async fn queued_prior_run_does_not_suppress_new_due_run() {
         let materializer = succeeding_materializer();
         let state = test_state_with_materializer(materializer);
-        create_automation(state.as_ref(), "nightly", "Nightly", true, vec![
+        create_automation(state.as_ref(), "nightly", "Nightly", vec![
             schedule_trigger("schedule", "* * * * *", true),
         ])
         .await;
@@ -709,7 +681,7 @@ mod tests {
     async fn failing_materializer_waits_until_next_cron_occurrence() {
         let materializer = TestAutomationRunMaterializer::fail_invalid_target("boom");
         let state = test_state_with_materializer(materializer.clone());
-        create_automation(state.as_ref(), "nightly", "Nightly", true, vec![
+        create_automation(state.as_ref(), "nightly", "Nightly", vec![
             schedule_trigger("schedule", "* * * * *", true),
         ])
         .await;

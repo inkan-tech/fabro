@@ -92,14 +92,12 @@ impl Automation {
         })
     }
 
-    /// Iterate the enabled schedule triggers. Yields nothing when the
-    /// automation itself is disabled.
+    /// Iterate the enabled schedule triggers.
     pub fn enabled_schedule_triggers(&self) -> impl Iterator<Item = &ScheduleTrigger> {
-        let enabled = self.enabled;
         self.triggers
             .iter()
             .filter_map(move |trigger| match trigger {
-                AutomationTrigger::Schedule(trigger) if enabled && trigger.enabled => Some(trigger),
+                AutomationTrigger::Schedule(trigger) if trigger.enabled => Some(trigger),
                 _ => None,
             })
     }
@@ -426,9 +424,13 @@ mod tests {
     }
 
     fn schedule_trigger(id: &str, cron: &str) -> AutomationTrigger {
+        schedule_trigger_with_enabled(id, cron, true)
+    }
+
+    fn schedule_trigger_with_enabled(id: &str, cron: &str, enabled: bool) -> AutomationTrigger {
         AutomationTrigger::Schedule(ScheduleTrigger {
-            id:         AutomationTriggerId::new(id).unwrap(),
-            enabled:    true,
+            id: AutomationTriggerId::new(id).unwrap(),
+            enabled,
             expression: cron.to_string(),
         })
     }
@@ -488,6 +490,29 @@ enabled = true
         let result = Automation::from_toml_bytes(AutomationId::new("legacy").unwrap(), bytes);
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn enabled_schedule_triggers_returns_only_enabled_schedule_triggers() {
+        let (automation, _) =
+            Automation::from_replace(AutomationId::new("nightly").unwrap(), AutomationReplace {
+                name:        "Nightly".to_string(),
+                description: None,
+                target:      target(),
+                triggers:    vec![
+                    api_trigger("manual"),
+                    schedule_trigger_with_enabled("nightly", "0 0 * * *", true),
+                    schedule_trigger_with_enabled("disabled", "0 1 * * *", false),
+                ],
+            })
+            .unwrap();
+
+        let trigger_ids = automation
+            .enabled_schedule_triggers()
+            .map(|trigger| trigger.id.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(trigger_ids, vec!["nightly"]);
     }
 
     #[test]

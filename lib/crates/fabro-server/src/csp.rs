@@ -93,7 +93,9 @@ fn build_policy_with_hashes(script_hashes: &[String]) -> String {
     // as matching WebSocket schemes for connect-src. `frame-src https:`
     // allows signed sandbox VNC preview iframes from dynamic Daytona preview
     // hosts. `https://github.com` in form-action allows the install-mode
-    // GitHub App manifest POST handoff.
+    // GitHub App manifest POST handoff. Loopback resume targets keep CLI
+    // OAuth working when the browser-visible origin and canonical origin use
+    // different loopback hostnames on a dynamically chosen port.
     format!(
         "default-src 'self'; \
          script-src 'self'{inline_script_sources} 'wasm-unsafe-eval'; \
@@ -106,7 +108,7 @@ fn build_policy_with_hashes(script_hashes: &[String]) -> String {
          manifest-src 'self'; \
          frame-ancestors 'none'; \
          base-uri 'self'; \
-         form-action 'self' https://github.com; \
+         form-action 'self' https://github.com http://127.0.0.1:*/auth/cli/resume http://localhost:*/auth/cli/resume; \
          object-src 'none'"
     )
 }
@@ -154,6 +156,15 @@ mod tests {
         assert!(
             policy.contains(&format!("'{expected_hash}'")),
             "install-mode inline script hash should be present in CSP: {policy}"
+        );
+    }
+
+    #[test]
+    fn policy_allows_cli_loopback_resume_form_posts() {
+        let policy = build_policy_with_hashes(&[]);
+        assert!(
+            policy.contains("form-action 'self' https://github.com http://127.0.0.1:*/auth/cli/resume http://localhost:*/auth/cli/resume"),
+            "CLI auth can submit the resume form to the canonical loopback origin on a dynamic port: {policy}"
         );
     }
 

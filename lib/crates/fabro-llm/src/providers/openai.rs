@@ -1,20 +1,17 @@
 use std::sync::Arc;
 
 use fabro_model::Catalog;
-use futures::stream;
 
 use crate::attachments::{self, AttachmentPolicy};
 use crate::codec::openai_responses::OpenAiResponses;
-use crate::codec::{Codec, CodecCtx, CodecParams, EncodedRequest, RawEvent, StreamDecoder};
+use crate::codec::{Codec, CodecCtx, CodecParams, EncodedRequest};
 use crate::error::Error;
 use crate::provider::{
     ProviderAdapter, StreamEventStream, validate_standard_speed, validate_tool_choice,
 };
-use crate::providers::common::{
-    self as common, parse_rate_limit_headers, parse_retry_after, send_and_read_response,
-    send_and_read_response_with_operation,
-};
+use crate::providers::common::{self as common};
 use crate::token_count::{InputTokenCount, InputTokenCountMethod};
+use crate::transport::{self, HttpTransport, SseFraming};
 use crate::types::{AdapterTimeout, Request, Response, StreamEvent};
 
 const DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
@@ -30,7 +27,7 @@ const DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
 /// Completions) to properly surface reasoning tokens, built-in tools, and
 /// server-side state.
 pub struct Adapter {
-    pub(crate) http: super::http_api::HttpApi,
+    pub(crate) http: HttpTransport,
     org_id:          Option<String>,
     project_id:      Option<String>,
     provider_name:   String,
@@ -48,7 +45,7 @@ impl Adapter {
     #[must_use]
     pub fn new_optional_auth(api_key: Option<String>) -> Self {
         Self {
-            http:          super::http_api::HttpApi::new_optional(api_key, DEFAULT_BASE_URL),
+            http:          HttpTransport::new_optional(api_key, DEFAULT_BASE_URL),
             org_id:        None,
             project_id:    None,
             provider_name: "openai".to_string(),
@@ -195,49 +192,6 @@ impl Adapter {
     }
 }
 
-/// State driving the streaming byte loop: the codec's decoder plus the line
-/// reader, with a buffer that flattens batched events into individual items.
-struct StreamLoop {
-    decoder:          Box<dyn StreamDecoder>,
-    line_reader:      super::common::LineReader,
-    pending:          std::collections::VecDeque<StreamEvent>,
-    done:             bool,
-    finished_emitted: bool,
-}
-
-/// Parse a single SSE message block into an (`event_type`, `data`) pair.
-///
-/// Each SSE message consists of one or more lines (`event:` and `data:`
-/// prefixed). Returns `None` if the block has no `data:` lines.
-fn parse_sse_message(message_block: &str) -> Option<(Option<String>, String)> {
-    let mut current_event: Option<String> = None;
-    let mut current_data = String::new();
-
-    for line in message_block.lines() {
-        if let Some(stripped) = line.strip_prefix("event: ") {
-            current_event = Some(stripped.to_string());
-        } else if let Some(stripped) = line.strip_prefix("event:") {
-            current_event = Some(stripped.trim().to_string());
-        } else if let Some(stripped) = line.strip_prefix("data: ") {
-            if !current_data.is_empty() {
-                current_data.push('\n');
-            }
-            current_data.push_str(stripped);
-        } else if let Some(stripped) = line.strip_prefix("data:") {
-            if !current_data.is_empty() {
-                current_data.push('\n');
-            }
-            current_data.push_str(stripped.trim());
-        }
-    }
-
-    if current_data.is_empty() {
-        None
-    } else {
-        Some((current_event, current_data))
-    }
-}
-
 #[async_trait::async_trait]
 impl ProviderAdapter for Adapter {
     fn name(&self) -> &str {
@@ -272,13 +226,8 @@ impl ProviderAdapter for Adapter {
         if let Some(t) = self.http.request_timeout {
             req = req.timeout(t);
         }
-        let (body, _headers) = send_and_read_response_with_operation(
-            req,
-            &self.provider_name,
-            "type",
-            "input_token_count",
-        )
-        .await?;
+        let (body, _headers) =
+            transport::send_for_body(req, "input_token_count", &codec, &ctx).await?;
         let input_tokens = codec.decode_count_tokens(&body)?;
 
         Ok(Some(InputTokenCount {
@@ -310,9 +259,7 @@ impl ProviderAdapter for Adapter {
         if let Some(t) = self.http.request_timeout {
             req = req.timeout(t);
         }
-        let (body, headers) = send_and_read_response(req, &self.provider_name, "type").await?;
-        let rate_limit = parse_rate_limit_headers(&headers);
-        codec.decode_response(&body, &ctx, rate_limit)
+        transport::complete_via_http(req, &codec, &ctx).await
     }
 
     async fn stream(&self, request: &Request) -> Result<StreamEventStream, Error> {
@@ -325,74 +272,14 @@ impl ProviderAdapter for Adapter {
         let ctx = self.codec_ctx(&resolved, &deployment_id, &params);
 
         let encoded = codec.encode(&ctx, true)?;
-        let http_resp = self
-            .build_http_request(&encoded)
-            .send()
-            .await
-            .map_err(|e| Error::network(e.to_string(), e))?;
-
-        let status = http_resp.status();
-        if !status.is_success() {
-            let retry_after = parse_retry_after(http_resp.headers());
-            let body = http_resp
-                .text()
-                .await
-                .map_err(|e| Error::network(e.to_string(), e))?;
-            return Err(codec.decode_error(status.as_u16(), &body, &ctx, retry_after));
-        }
-
-        let rate_limit = parse_rate_limit_headers(http_resp.headers());
-        let stream_read_timeout = self.http.stream_read_timeout;
-        let decoder = codec.stream_decoder(&ctx, rate_limit);
-
-        let out = stream::unfold(
-            StreamLoop {
-                decoder,
-                line_reader: super::common::LineReader::new(http_resp, stream_read_timeout),
-                pending: std::collections::VecDeque::new(),
-                done: false,
-                finished_emitted: false,
-            },
-            |mut state| async move {
-                loop {
-                    if let Some(event) = state.pending.pop_front() {
-                        return Some((Ok(event), state));
-                    }
-
-                    if state.done {
-                        if state.finished_emitted {
-                            return None;
-                        }
-                        state.finished_emitted = true;
-                        let events = state.decoder.finish();
-                        if events.is_empty() {
-                            return None;
-                        }
-                        state.pending.extend(events);
-                        continue;
-                    }
-
-                    match state.line_reader.read_next_chunk("\n\n").await {
-                        Ok(Some(block)) => {
-                            let Some((event_type, data)) = parse_sse_message(&block) else {
-                                continue;
-                            };
-                            match state.decoder.on_event(RawEvent {
-                                event: event_type.as_deref(),
-                                data:  &data,
-                            }) {
-                                Ok(events) => state.pending.extend(events),
-                                Err(e) => return Some((Err(e), state)),
-                            }
-                        }
-                        Ok(None) => state.done = true,
-                        Err(e) => return Some((Err(e), state)),
-                    }
-                }
-            },
-        );
-
-        Ok(Box::pin(out))
+        transport::stream_via_http(
+            self.build_http_request(&encoded),
+            &codec,
+            &ctx,
+            SseFraming::EventBlocks,
+            self.http.stream_read_timeout,
+        )
+        .await
     }
 }
 

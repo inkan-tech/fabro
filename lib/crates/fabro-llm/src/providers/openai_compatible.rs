@@ -1,19 +1,16 @@
-use std::collections::VecDeque;
 use std::sync::Arc;
 
 use fabro_model::Catalog;
-use futures::stream;
 
 use crate::codec::openai_compatible::OpenAiCompatible;
-use crate::codec::{Codec, CodecCtx, CodecParams, RawEvent, StreamDecoder};
+use crate::codec::{Codec, CodecCtx, CodecParams};
 use crate::error::Error;
 use crate::provider::{
     ProviderAdapter, StreamEventStream, validate_standard_speed, validate_tool_choice,
 };
-use crate::providers::common::{
-    api_model_id, parse_rate_limit_headers, parse_retry_after, send_and_read_response,
-};
-use crate::types::{AdapterTimeout, Request, Response, StreamEvent};
+use crate::providers::common::api_model_id;
+use crate::transport::{self, HttpTransport, SseFraming};
+use crate::types::{AdapterTimeout, Request, Response};
 
 /// `OpenAI`-compatible Chat Completions adapter (Section 7.10).
 ///
@@ -27,7 +24,7 @@ use crate::types::{AdapterTimeout, Request, Response, StreamEvent};
 /// auth, base URL, and the streaming byte loop, and delegates all wire
 /// translation to the codec.
 pub struct Adapter {
-    pub(crate) http: super::http_api::HttpApi,
+    pub(crate) http: HttpTransport,
     provider_name:   String,
     catalog:         Option<Arc<Catalog>>,
 }
@@ -41,7 +38,7 @@ impl Adapter {
     #[must_use]
     pub fn new_optional_auth(api_key: Option<String>, base_url: impl Into<String>) -> Self {
         Self {
-            http:          super::http_api::HttpApi::new_optional(api_key, base_url),
+            http:          HttpTransport::new_optional(api_key, base_url),
             provider_name: "openai-compatible".to_string(),
             catalog:       None,
         }
@@ -130,20 +127,6 @@ impl Adapter {
     }
 }
 
-/// State driving the streaming byte loop: the codec's decoder plus the line
-/// reader, with a small buffer that flattens batched events into individual
-/// stream items.
-struct StreamLoop {
-    decoder:          Box<dyn StreamDecoder>,
-    line_reader:      super::common::LineReader,
-    /// Events decoded but not yet yielded.
-    pending:          VecDeque<StreamEvent>,
-    /// Byte stream exhausted.
-    done:             bool,
-    /// `finish()` already drained.
-    finished_emitted: bool,
-}
-
 #[async_trait::async_trait]
 impl ProviderAdapter for Adapter {
     fn name(&self) -> &str {
@@ -171,9 +154,7 @@ impl ProviderAdapter for Adapter {
             req = req.timeout(t);
         }
 
-        let (body, headers) = send_and_read_response(req, &self.provider_name, "type").await?;
-        let rate_limit = parse_rate_limit_headers(&headers);
-        codec.decode_response(&body, &ctx, rate_limit)
+        transport::complete_via_http(req, &codec, &ctx).await
     }
 
     async fn stream(&self, request: &Request) -> Result<StreamEventStream, Error> {
@@ -185,73 +166,13 @@ impl ProviderAdapter for Adapter {
         let ctx = self.codec_ctx(request, &deployment_id, &params);
 
         let req = self.encoded_request(&codec, &ctx, true)?;
-        let http_resp = req
-            .send()
-            .await
-            .map_err(|e| Error::network(e.to_string(), e))?;
-
-        let status = http_resp.status();
-        if !status.is_success() {
-            let retry_after = parse_retry_after(http_resp.headers());
-            let body = http_resp
-                .text()
-                .await
-                .map_err(|e| Error::network(e.to_string(), e))?;
-            return Err(codec.decode_error(status.as_u16(), &body, &ctx, retry_after));
-        }
-
-        let rate_limit = parse_rate_limit_headers(http_resp.headers());
-        let stream_read_timeout = self.http.stream_read_timeout;
-        let decoder = codec.stream_decoder(&ctx, rate_limit);
-        let line_reader = super::common::LineReader::new(http_resp, stream_read_timeout);
-
-        let out = stream::unfold(
-            StreamLoop {
-                decoder,
-                line_reader,
-                pending: VecDeque::new(),
-                done: false,
-                finished_emitted: false,
-            },
-            |mut state| async move {
-                loop {
-                    if let Some(event) = state.pending.pop_front() {
-                        return Some((Ok(event), state));
-                    }
-
-                    if state.done {
-                        if state.finished_emitted {
-                            return None;
-                        }
-                        state.finished_emitted = true;
-                        state.pending = state.decoder.finish().into();
-                        if state.pending.is_empty() {
-                            return None;
-                        }
-                        continue;
-                    }
-
-                    match state.line_reader.read_next_chunk("\n").await {
-                        Ok(Some(line)) => {
-                            let line = line.trim();
-                            if line.is_empty() || line.starts_with(':') {
-                                continue;
-                            }
-                            let Some(data) = line.strip_prefix("data:").map(str::trim) else {
-                                continue;
-                            };
-                            match state.decoder.on_event(RawEvent { event: None, data }) {
-                                Ok(events) => state.pending = events.into(),
-                                Err(e) => return Some((Err(e), state)),
-                            }
-                        }
-                        Ok(None) => state.done = true,
-                        Err(e) => return Some((Err(e), state)),
-                    }
-                }
-            },
-        );
-
-        Ok(Box::pin(out))
+        transport::stream_via_http(
+            req,
+            &codec,
+            &ctx,
+            SseFraming::DataLines,
+            self.http.stream_read_timeout,
+        )
+        .await
     }
 }

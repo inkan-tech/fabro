@@ -98,7 +98,9 @@ pub(super) struct ApiUsage {
     pub completion_tokens: i64,
     /// Tolerant superset: aggregator dialects (OpenRouter) report in-band
     /// USD cost and cache/reasoning token detail. Absent on plain providers.
-    #[serde(default)]
+    /// Perplexity returns an object `{"total_cost": f64, ...}` instead of a
+    /// bare float — the custom deserializer accepts both.
+    #[serde(default, deserialize_with = "deserialize_cost")]
     pub cost: Option<f64>,
     #[serde(default)]
     pub prompt_tokens_details: Option<PromptTokensDetails>,
@@ -190,6 +192,22 @@ pub(super) struct StreamToolCall {
 pub(super) struct StreamFunction {
     pub name:      Option<String>,
     pub arguments: Option<String>,
+}
+
+fn deserialize_cost<'de, D>(deserializer: D) -> Result<Option<f64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize;
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    match value {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::Number(n)) => Ok(n.as_f64()),
+        Some(serde_json::Value::Object(map)) => Ok(map
+            .get("total_cost")
+            .and_then(|v| v.as_f64())),
+        Some(_) => Ok(None),
+    }
 }
 
 // --- Accumulated tool call state for streaming ---

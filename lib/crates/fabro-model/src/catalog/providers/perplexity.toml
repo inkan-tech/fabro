@@ -1,0 +1,50 @@
+[providers.perplexity]
+display_name = "Perplexity"
+adapter = "openai_compatible"
+api_key_url = "https://www.perplexity.ai/settings/api"
+base_url = "https://api.perplexity.ai"
+priority = 55
+
+[providers.perplexity.auth]
+credentials = ["env:PERPLEXITY_API_KEY", "vault:PERPLEXITY_API_KEY"]
+
+[models."sonar-pro"]
+provider = "perplexity"
+api_id = "sonar-pro"
+display_name = "Sonar Pro"
+family = "sonar"
+default = true
+aliases = ["perplexity", "sonar"]
+
+[models."sonar-pro".limits]
+context_window = 200000
+max_output = 8000
+
+[models."sonar-pro".features]
+tools = true
+vision = false
+reasoning = false
+
+[models."sonar-pro".costs]
+input_cost_per_mtok = 3.0
+output_cost_per_mtok = 15.0
+
+[models."sonar-reasoning-pro"]
+provider = "perplexity"
+api_id = "sonar-reasoning-pro"
+display_name = "Sonar Reasoning Pro"
+family = "sonar"
+aliases = ["sonar-reasoning"]
+
+[models."sonar-reasoning-pro".limits]
+context_window = 200000
+max_output = 8000
+
+[models."sonar-reasoning-pro".features]
+tools = false
+vision = false
+reasoning = true
+
+[models."sonar-reasoning-pro".costs]
+input_cost_per_mtok = 3.0
+output_cost_per_mtok = 15.0

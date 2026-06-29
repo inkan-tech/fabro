@@ -309,6 +309,8 @@ mod tests {
             ("kimi-k2.5",                          "kimi-k2.5",                           T::OpenAiCompatible,  C::OpenAiCompatible,  B::OpenAi,    P::OpenAi),
             ("mercury-2",                          "mercury-2",                           T::OpenAiCompatible,  C::OpenAiCompatible,  B::OpenAi,    P::OpenAi),
             ("minimax-m2.5",                       "minimax-m2.5",                        T::OpenAiCompatible,  C::OpenAiCompatible,  B::OpenAi,    P::OpenAi),
+            ("sonar-pro",                          "sonar-pro",                           T::OpenAiCompatible,  C::OpenAiCompatible,  B::OpenAi,    P::OpenAi),
+            ("sonar-reasoning-pro",                "sonar-reasoning-pro",                 T::OpenAiCompatible,  C::OpenAiCompatible,  B::OpenAi,    P::OpenAi),
             ("venice-uncensored-1-2",              "venice-uncensored-1-2",               T::OpenAiCompatible,  C::OpenAiCompatible,  B::OpenAi,    P::OpenAi),
             ("venice-uncensored-role-play",        "venice-uncensored-role-play",         T::OpenAiCompatible,  C::OpenAiCompatible,  B::OpenAi,    P::OpenAi),
         ];

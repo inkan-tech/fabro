@@ -1,4 +1,7 @@
 {
   "private": true,
-  "workspaces": ["apps/*", "lib/packages/*"]
+  "workspaces": ["apps/*", "lib/packages/*"],
+  "patchedDependencies": {
+    "@assistant-ui/react@0.14.5": "patches/@assistant-ui%2Freact@0.14.5.patch"
+  }
 }

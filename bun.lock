@@ -87,6 +87,9 @@
       },
     },
   },
+  "patchedDependencies": {
+    "@assistant-ui/react@0.14.5": "patches/@assistant-ui%2Freact@0.14.5.patch",
+  },
   "packages": {
     "@assistant-ui/core": ["@assistant-ui/core@0.2.2", "", { "dependencies": { "assistant-stream": "^0.3.14", "nanoid": "^5.1.11" }, "peerDependencies": { "@assistant-ui/store": "^0.2.10", "@assistant-ui/tap": "^0.5.11", "@types/react": "*", "assistant-cloud": "^0.1.27", "react": "^18 || ^19", "zustand": "^5.0.11" }, "optionalPeers": ["@types/react", "assistant-cloud", "react", "zustand"] }, "sha512-y1LY7P7T+X3zAZZpfwYppaCkuscDCvbtDtIx87E9fdsY3t9o0h6tjunYdRgExcRQyzfCOE4bECeylYTs4Ky/NA=="],
 

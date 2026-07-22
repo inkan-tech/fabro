@@ -1,0 +1,13 @@
+diff --git a/package.json b/package.json
+index 65ca69ed514da459ddb5510850102776a40604f3..ddddc9cfa5ad311e2be8f5eb6e75ee9d652734f4 100644
+--- a/package.json
++++ b/package.json
+@@ -46,7 +46,7 @@
+     "internal",
+     "README.md"
+   ],
+-  "sideEffects": false,
++  "sideEffects": true,
+   "scripts": {
+     "prepack": "cp ../../README.md /tmp/aui-readme-pack.md && mv /tmp/aui-readme-pack.md ./README.md",
+     "postpack": "rm -f ./README.md && ln -s ../../README.md ./README.md",

@@ -1,7 +1,7 @@
 //! Response decoding: Chat Completions body → canonical `Response`.
 
 use super::translate::{self, map_finish_reason};
-use super::wire::{ApiResponse, ApiUsage};
+use super::wire::{ApiCost, ApiResponse, ApiUsage};
 use crate::codec::CodecCtx;
 use crate::error::{Error, ProviderErrorDetail, ProviderErrorKind};
 use crate::types::{
@@ -57,7 +57,7 @@ pub(super) fn decode_response(
 
     let wire_usage = api_resp.usage.as_ref();
     let usage = wire_usage.map_or_else(TokenCounts::default, ApiUsage::token_counts);
-    let cost_usd = wire_usage.and_then(|u| u.cost);
+    let cost_usd = wire_usage.and_then(|u| u.cost.as_ref().and_then(ApiCost::total));
     let cost_source = translate::authoritative_cost_source(cost_usd);
 
     Ok(Response {

@@ -31,6 +31,7 @@ const OPTIONAL_VAULT_SECRETS: &[&str] = &[
     EnvVars::MINIMAX_API_KEY,
     EnvVars::OPENAI_API_KEY,
     EnvVars::OPENROUTER_API_KEY,
+    EnvVars::PERPLEXITY_API_KEY,
     EnvVars::ZAI_API_KEY,
     EnvVars::DAYTONA_API_KEY,
 ];

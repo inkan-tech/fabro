@@ -2568,6 +2568,13 @@ entropy = 3
 keywords = ["sk-or-v1-"]
 
 [[rules]]
+id = "perplexity-api-key"
+description = "Found a Perplexity API Key, posing a risk of unauthorized access to LLM provider usage and billing."
+regex = '''\b(pplx-[A-Za-z0-9]{40,})(?:['|\"|\n|\r|\s|\x60|;]|$)'''
+entropy = 3
+keywords = ["pplx-"]
+
+[[rules]]
 id = "openshift-user-token"
 description = "Found an OpenShift user token, potentially compromising an OpenShift/Kubernetes cluster."
 regex = '''\b(sha256~[\w-]{43})(?:[^\w-]|\z)'''

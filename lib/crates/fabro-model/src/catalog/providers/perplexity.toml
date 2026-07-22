@@ -1,0 +1,141 @@
+[providers.perplexity]
+display_name = "Perplexity"
+adapter = "openai_compatible"
+api_key_url = "https://www.perplexity.ai/settings/api"
+base_url = "https://api.perplexity.ai"
+priority = 40
+enabled = false
+aliases = ["pplx"]
+
+[providers.perplexity.auth]
+credentials = ["env:PERPLEXITY_API_KEY", "vault:PERPLEXITY_API_KEY"]
+
+# Perplexity's Sonar chat-completions endpoint is OpenAI-compatible, so this
+# provider is pure configuration over the `openai_compatible` codec (no new
+# adapter), the same shape as `openrouter.toml`.
+#
+# Scope: the standard Sonar API only (search-grounded models). Perplexity's
+# separate Agent API (which routes to Claude/GPT) is a distinct endpoint and
+# billing family; add it as its own provider package if needed.
+#
+# Costs are best-effort per-million-token estimates and exclude Perplexity's
+# per-request search surcharge, which is not token-metered.
+#
+# To enable Perplexity, add the following to ~/.fabro/settings.toml:
+#
+# [llm.providers.perplexity]
+# enabled = true
+#
+# Then run `fabro provider login perplexity` to store the API key,
+# or set the PERPLEXITY_API_KEY environment variable.
+
+# ---------- Sonar (lightweight search) ----------
+
+[models."sonar"]
+provider = "perplexity"
+api_id = "sonar"
+display_name = "Sonar"
+family = "sonar"
+aliases = ["pplx-sonar"]
+
+[models."sonar".limits]
+context_window = 128000
+max_output = 8192
+
+[models."sonar".features]
+tools = true
+vision = false
+reasoning = false
+
+[models."sonar".costs]
+input_cost_per_mtok = 1.0
+output_cost_per_mtok = 1.0
+
+# ---------- Sonar Pro (advanced multi-source search) ----------
+
+[models."sonar-pro"]
+provider = "perplexity"
+api_id = "sonar-pro"
+display_name = "Sonar Pro"
+family = "sonar"
+default = true
+aliases = ["pplx-sonar-pro"]
+
+[models."sonar-pro".limits]
+context_window = 200000
+max_output = 8192
+
+[models."sonar-pro".features]
+tools = true
+vision = false
+reasoning = false
+
+[models."sonar-pro".costs]
+input_cost_per_mtok = 3.0
+output_cost_per_mtok = 15.0
+
+# ---------- Sonar Reasoning (chain-of-thought + search) ----------
+
+[models."sonar-reasoning"]
+provider = "perplexity"
+api_id = "sonar-reasoning"
+display_name = "Sonar Reasoning"
+family = "sonar-reasoning"
+aliases = ["pplx-sonar-reasoning"]
+
+[models."sonar-reasoning".limits]
+context_window = 128000
+max_output = 8192
+
+[models."sonar-reasoning".features]
+tools = true
+vision = false
+reasoning = true
+
+[models."sonar-reasoning".costs]
+input_cost_per_mtok = 1.0
+output_cost_per_mtok = 5.0
+
+# ---------- Sonar Reasoning Pro ----------
+
+[models."sonar-reasoning-pro"]
+provider = "perplexity"
+api_id = "sonar-reasoning-pro"
+display_name = "Sonar Reasoning Pro"
+family = "sonar-reasoning"
+aliases = ["pplx-sonar-reasoning-pro"]
+
+[models."sonar-reasoning-pro".limits]
+context_window = 128000
+max_output = 8192
+
+[models."sonar-reasoning-pro".features]
+tools = true
+vision = false
+reasoning = true
+
+[models."sonar-reasoning-pro".costs]
+input_cost_per_mtok = 2.0
+output_cost_per_mtok = 8.0
+
+# ---------- Sonar Deep Research ----------
+
+[models."sonar-deep-research"]
+provider = "perplexity"
+api_id = "sonar-deep-research"
+display_name = "Sonar Deep Research"
+family = "sonar-reasoning"
+aliases = ["pplx-deep-research"]
+
+[models."sonar-deep-research".limits]
+context_window = 128000
+max_output = 8192
+
+[models."sonar-deep-research".features]
+tools = true
+vision = false
+reasoning = true
+
+[models."sonar-deep-research".costs]
+input_cost_per_mtok = 2.0
+output_cost_per_mtok = 8.0

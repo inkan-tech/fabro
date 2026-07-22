@@ -2057,6 +2057,90 @@ enabled = true
     }
 
     #[test]
+    fn builtin_perplexity_provider_is_opt_in() {
+        let perplexity = ProviderId::new("perplexity");
+        let builtin = Catalog::builtin();
+
+        assert!(builtin.provider(&perplexity).is_none());
+        assert!(builtin.list(Some(&perplexity)).is_empty());
+
+        let catalog = Catalog::from_builtin_with_overrides(&minimal_settings(
+            r"
+[providers.perplexity]
+enabled = true
+",
+        ))
+        .expect("enabled Perplexity override should build from the built-in provider settings");
+
+        let provider = catalog
+            .provider(&perplexity)
+            .expect("enabled Perplexity provider should be present");
+        assert_eq!(provider.adapter, AdapterKind::OpenAiCompatible);
+        assert_eq!(provider.codec, CodecKind::OpenAiCompatible);
+        assert_eq!(
+            provider.base_url.as_deref(),
+            Some("https://api.perplexity.ai")
+        );
+        assert_eq!(provider.billing_policy, BillingPolicy::OpenAi);
+        assert_eq!(
+            catalog
+                .default_for_provider(&perplexity)
+                .map(|model| model.id.as_str()),
+            Some("sonar-pro")
+        );
+    }
+
+    #[test]
+    fn builtin_perplexity_agent_provider_is_opt_in() {
+        let agent = ProviderId::new("perplexity-agent");
+        let builtin = Catalog::builtin();
+
+        assert!(builtin.provider(&agent).is_none());
+        assert!(builtin.list(Some(&agent)).is_empty());
+
+        let catalog = Catalog::from_builtin_with_overrides(&minimal_settings(
+            r"
+[providers.perplexity-agent]
+enabled = true
+",
+        ))
+        .expect("enabled Perplexity Agent override should build from built-in provider settings");
+
+        let provider = catalog
+            .provider(&agent)
+            .expect("enabled Perplexity Agent provider should be present");
+        // Agent API is OpenAI Responses-compatible, not chat-completions.
+        assert_eq!(provider.adapter, AdapterKind::OpenAi);
+        assert_eq!(provider.codec, CodecKind::OpenAiResponses);
+        assert_eq!(
+            provider.base_url.as_deref(),
+            Some("https://api.perplexity.ai/v1")
+        );
+
+        // Claude rows bill Anthropic-style; GPT rows inherit the OpenAI default.
+        assert_eq!(
+            catalog
+                .model_settings("pplx/claude-sonnet-4-6")
+                .unwrap()
+                .billing_policy,
+            BillingPolicy::Anthropic
+        );
+        assert_eq!(
+            catalog
+                .model_settings("pplx/gpt-5.4")
+                .unwrap()
+                .billing_policy,
+            BillingPolicy::OpenAi
+        );
+        assert_eq!(
+            catalog
+                .default_for_provider(&agent)
+                .map(|model| model.id.as_str()),
+            Some("pplx/claude-sonnet-4-6")
+        );
+    }
+
+    #[test]
     fn builtin_ollama_provider_is_opt_in() {
         let ollama = ProviderId::new("ollama");
         let builtin = Catalog::builtin();

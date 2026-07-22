@@ -4,7 +4,7 @@
 //! already-stripped payloads (including the `[DONE]` sentinel) via `on_event`.
 
 use super::translate::{map_finish_reason, parse_tool_arguments};
-use super::wire::{AccumulatedToolCall, StreamChunk};
+use super::wire::{AccumulatedToolCall, ApiCost, StreamChunk};
 use crate::codec::{CodecCtx, RawEvent, StreamDecoder};
 use crate::error::Error;
 use crate::types::{
@@ -71,7 +71,7 @@ impl StreamState {
         if let Some(usage) = &chunk.usage {
             self.usage = usage.token_counts();
             // Keep a previously seen cost when a later usage chunk omits it.
-            self.cost_usd = usage.cost.or(self.cost_usd);
+            self.cost_usd = usage.cost.as_ref().and_then(ApiCost::total).or(self.cost_usd);
         }
 
         let choices = chunk.choices.as_ref()?;

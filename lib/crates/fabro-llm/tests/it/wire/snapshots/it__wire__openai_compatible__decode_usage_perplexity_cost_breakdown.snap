@@ -1,0 +1,67 @@
+---
+source: lib/crates/fabro-llm/tests/it/wire/openai_compatible.rs
+expression: rendered
+---
+{
+  "id": "pplx_test",
+  "model": "test-model",
+  "provider": "openai-compatible",
+  "message": {
+    "role": "assistant",
+    "content": [
+      {
+        "kind": "text",
+        "data": "ok"
+      }
+    ]
+  },
+  "finish_reason": "stop",
+  "usage": {
+    "input_tokens": 2,
+    "output_tokens": 9,
+    "reasoning_tokens": 0,
+    "cache_read_tokens": 0,
+    "cache_write_tokens": 0
+  },
+  "raw": {
+    "id": "pplx_test",
+    "object": "chat.completion",
+    "created": 1700000000,
+    "model": "test-model",
+    "citations": [
+      "https://example.com"
+    ],
+    "search_results": [
+      {
+        "title": "x",
+        "url": "https://example.com"
+      }
+    ],
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": "ok"
+        },
+        "finish_reason": "stop"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 2,
+      "completion_tokens": 9,
+      "total_tokens": 11,
+      "search_context_size": "low",
+      "cost": {
+        "input_tokens_cost": 0.0,
+        "output_tokens_cost": 0.00001,
+        "request_cost": 0.005,
+        "total_cost": 0.00501
+      }
+    }
+  },
+  "warnings": [],
+  "rate_limit": null,
+  "cost_usd": 0.00501,
+  "cost_source": "authoritative"
+}

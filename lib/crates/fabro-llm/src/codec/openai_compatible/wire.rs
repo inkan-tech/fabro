@@ -98,12 +98,35 @@ pub(super) struct ApiUsage {
     pub completion_tokens: i64,
     /// Tolerant superset: aggregator dialects (OpenRouter) report in-band
     /// USD cost and cache/reasoning token detail. Absent on plain providers.
+    /// Perplexity reports it as a breakdown object rather than a bare number,
+    /// so [`ApiCost`] accepts either shape.
     #[serde(default)]
-    pub cost: Option<f64>,
+    pub cost: Option<ApiCost>,
     #[serde(default)]
     pub prompt_tokens_details: Option<PromptTokensDetails>,
     #[serde(default)]
     pub completion_tokens_details: Option<CompletionTokensDetails>,
+}
+
+/// In-band USD cost. Aggregators (OpenRouter) send a bare number; Perplexity
+/// sends a breakdown object whose `total_cost` is the authoritative total.
+#[derive(serde::Deserialize)]
+#[serde(untagged)]
+pub(super) enum ApiCost {
+    Amount(f64),
+    Breakdown {
+        #[serde(default)]
+        total_cost: Option<f64>,
+    },
+}
+
+impl ApiCost {
+    pub(super) fn total(&self) -> Option<f64> {
+        match self {
+            Self::Amount(amount) => Some(*amount),
+            Self::Breakdown { total_cost } => *total_cost,
+        }
+    }
 }
 
 #[derive(serde::Deserialize)]

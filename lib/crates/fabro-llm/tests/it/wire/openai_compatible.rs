@@ -389,6 +389,40 @@ async fn decode_usage_openrouter_cost_and_cache_write() {
     fabro_test::fabro_json_snapshot!(response);
 }
 
+/// Perplexity reports `usage.cost` as a breakdown object (not a bare number
+/// like OpenRouter). The tolerant `ApiCost` decode reads `total_cost` as the
+/// authoritative `cost_usd`; the extra search fields are ignored.
+#[tokio::test]
+async fn decode_usage_perplexity_cost_breakdown() {
+    let response = decode_response(serde_json::json!({
+        "id": "pplx_test",
+        "object": "chat.completion",
+        "created": CREATED_TS,
+        "model": MODEL,
+        "citations": ["https://example.com"],
+        "search_results": [{"title": "x", "url": "https://example.com"}],
+        "choices": [{
+            "index": 0,
+            "message": {"role": "assistant", "content": "ok"},
+            "finish_reason": "stop"
+        }],
+        "usage": {
+            "prompt_tokens": 2,
+            "completion_tokens": 9,
+            "total_tokens": 11,
+            "search_context_size": "low",
+            "cost": {
+                "input_tokens_cost": 0.0,
+                "output_tokens_cost": 1e-05,
+                "request_cost": 0.005,
+                "total_cost": 0.00501
+            }
+        }
+    }))
+    .await;
+    fabro_test::fabro_json_snapshot!(response);
+}
+
 // ---------------------------------------------------------------------------
 // Stream
 // ---------------------------------------------------------------------------

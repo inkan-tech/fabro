@@ -1,0 +1,200 @@
+[providers.perplexity-agent]
+display_name = "Perplexity Agent API"
+adapter = "openai"
+api_key_url = "https://www.perplexity.ai/settings/api"
+base_url = "https://api.perplexity.ai/v1"
+priority = 41
+enabled = false
+aliases = ["pplx-agent"]
+
+[providers.perplexity-agent.auth]
+credentials = ["env:PERPLEXITY_API_KEY", "vault:PERPLEXITY_API_KEY"]
+
+# Perplexity's Agent API (https://api.perplexity.ai/v1/agent) routes to
+# third-party frontier models (Claude, GPT, ...) behind one Perplexity key.
+# It is OpenAI **Responses**-compatible (accepts POST /v1/responses), so this
+# provider uses the `openai` adapter (Responses codec), unlike the Sonar
+# `perplexity` provider which is chat-completions (`openai_compatible`).
+#
+# Notes / caveats:
+# - Shares the PERPLEXITY_API_KEY credential with the `perplexity` provider.
+# - Fabro's Responses codec may probe `/responses/input_tokens` for exact
+#   input-token counts. If Perplexity does not expose that endpoint, the call
+#   degrades to a local estimate (InputTokenCountPreference::PreferProvider
+#   falls back on eligible errors), so it is non-fatal.
+# - Catalog model ids are prefixed `pplx/` to stay globally unique (the wire
+#   `api_id` keeps the provider-namespaced form Perplexity expects, e.g.
+#   `anthropic/claude-opus-4-8`). This avoids collisions with the native
+#   `anthropic`/`openai` providers and the `openrouter` package.
+# - Costs are best-effort estimates; Perplexity Agent API pricing may carry a
+#   margin over the underlying provider list price. Claude rows set
+#   billing_policy = "anthropic" so any reported cache tokens bill correctly.
+# - Representative model set; the Agent API also exposes additional GPT-5
+#   tiers, Gemini, Grok, Nemotron, and Sonar. Add rows as needed.
+#
+# To enable, add to ~/.fabro/settings.toml:
+#
+# [llm.providers.perplexity-agent]
+# enabled = true
+#
+# Then run `fabro provider login perplexity-agent` (or set PERPLEXITY_API_KEY).
+
+# ---------- Anthropic Claude via Perplexity Agent API ----------
+
+[models."pplx/claude-opus-4-8"]
+provider = "perplexity-agent"
+api_id = "anthropic/claude-opus-4-8"
+display_name = "Claude Opus 4.8 (via Perplexity)"
+family = "claude-4"
+billing_policy = "anthropic"
+aliases = ["pplx-opus-4-8"]
+
+[models."pplx/claude-opus-4-8".limits]
+context_window = 1000000
+max_output = 128000
+
+[models."pplx/claude-opus-4-8".features]
+tools = true
+vision = true
+reasoning = true
+prompt_cache = false
+
+[models."pplx/claude-opus-4-8".costs]
+input_cost_per_mtok = 5.0
+output_cost_per_mtok = 25.0
+cache_input_cost_per_mtok = 0.5
+
+[models."pplx/claude-opus-4-7"]
+provider = "perplexity-agent"
+api_id = "anthropic/claude-opus-4-7"
+display_name = "Claude Opus 4.7 (via Perplexity)"
+family = "claude-4"
+billing_policy = "anthropic"
+aliases = ["pplx-opus-4-7"]
+
+[models."pplx/claude-opus-4-7".limits]
+context_window = 1000000
+max_output = 128000
+
+[models."pplx/claude-opus-4-7".features]
+tools = true
+vision = true
+reasoning = true
+prompt_cache = false
+
+[models."pplx/claude-opus-4-7".costs]
+input_cost_per_mtok = 5.0
+output_cost_per_mtok = 25.0
+cache_input_cost_per_mtok = 0.5
+
+[models."pplx/claude-sonnet-4-6"]
+provider = "perplexity-agent"
+api_id = "anthropic/claude-sonnet-4-6"
+display_name = "Claude Sonnet 4.6 (via Perplexity)"
+family = "claude-4"
+default = true
+billing_policy = "anthropic"
+aliases = ["pplx-sonnet-4-6"]
+
+[models."pplx/claude-sonnet-4-6".limits]
+context_window = 200000
+max_output = 64000
+
+[models."pplx/claude-sonnet-4-6".features]
+tools = true
+vision = true
+reasoning = true
+prompt_cache = false
+
+[models."pplx/claude-sonnet-4-6".costs]
+input_cost_per_mtok = 3.0
+output_cost_per_mtok = 15.0
+cache_input_cost_per_mtok = 0.3
+
+[models."pplx/claude-haiku-4-5"]
+provider = "perplexity-agent"
+api_id = "anthropic/claude-haiku-4-5"
+display_name = "Claude Haiku 4.5 (via Perplexity)"
+family = "claude-4"
+billing_policy = "anthropic"
+aliases = ["pplx-haiku-4-5"]
+
+[models."pplx/claude-haiku-4-5".limits]
+context_window = 200000
+max_output = 8192
+
+[models."pplx/claude-haiku-4-5".features]
+tools = true
+vision = true
+reasoning = true
+prompt_cache = false
+
+[models."pplx/claude-haiku-4-5".costs]
+input_cost_per_mtok = 0.8
+output_cost_per_mtok = 4.0
+cache_input_cost_per_mtok = 0.08
+
+# ---------- OpenAI GPT via Perplexity Agent API ----------
+
+[models."pplx/gpt-5.5"]
+provider = "perplexity-agent"
+api_id = "openai/gpt-5.5"
+display_name = "GPT-5.5 (via Perplexity)"
+family = "gpt-5"
+aliases = ["pplx-gpt-5.5"]
+
+[models."pplx/gpt-5.5".limits]
+context_window = 272000
+max_output = 128000
+
+[models."pplx/gpt-5.5".features]
+tools = true
+vision = true
+reasoning = true
+
+[models."pplx/gpt-5.5".costs]
+input_cost_per_mtok = 5.0
+output_cost_per_mtok = 30.0
+cache_input_cost_per_mtok = 0.5
+
+[models."pplx/gpt-5.4"]
+provider = "perplexity-agent"
+api_id = "openai/gpt-5.4"
+display_name = "GPT-5.4 (via Perplexity)"
+family = "gpt-5"
+aliases = ["pplx-gpt-5.4"]
+
+[models."pplx/gpt-5.4".limits]
+context_window = 272000
+max_output = 128000
+
+[models."pplx/gpt-5.4".features]
+tools = true
+vision = true
+reasoning = true
+
+[models."pplx/gpt-5.4".costs]
+input_cost_per_mtok = 2.5
+output_cost_per_mtok = 15.0
+cache_input_cost_per_mtok = 0.25
+
+[models."pplx/gpt-5.4-mini"]
+provider = "perplexity-agent"
+api_id = "openai/gpt-5.4-mini"
+display_name = "GPT-5.4 Mini (via Perplexity)"
+family = "gpt-5"
+aliases = ["pplx-gpt-5.4-mini"]
+
+[models."pplx/gpt-5.4-mini".limits]
+context_window = 272000
+max_output = 128000
+
+[models."pplx/gpt-5.4-mini".features]
+tools = true
+vision = true
+reasoning = true
+
+[models."pplx/gpt-5.4-mini".costs]
+input_cost_per_mtok = 0.75
+output_cost_per_mtok = 4.5
+cache_input_cost_per_mtok = 0.075

@@ -22,7 +22,7 @@ Fabro only reads `settings.toml`. Older `server.toml`, `user.toml`, and `cli.tom
 
 The CLI-only `[cli.*]` sections (including `[cli.target]`) belong in the client machine's `settings.toml`. They tell CLI commands how to reach a server. The server process does not read `[cli.*]` for its own binding or routing.
 
-Fabro does not terminate inbound TLS directly. Bind `[server.listen]` to a Unix socket or plain TCP port, and terminate HTTPS or mTLS at a reverse proxy, load balancer, or platform ingress in front of Fabro. Use `[server.api].url` and `[server.web].url` for those external HTTPS URLs.
+Fabro does not terminate inbound TLS directly. Bind `[server.listen]` to a Unix socket or plain TCP port, and terminate HTTPS or mTLS at a reverse proxy, load balancer, Tailscale Service, or platform ingress in front of Fabro. Use `[server.api].url` and `[server.web].url` for those external HTTPS URLs.
 
 ### Full reference
 
@@ -112,6 +112,7 @@ team = "platform"
 [run.checkpoint]
 exclude_globs = ["**/node_modules/**", "**/.cache/**"]
 skip_git_hooks = false
+commit_timeout = "30s"
 
 [run.inputs]
 default_branch = "main"
@@ -151,6 +152,8 @@ Control the embedded SPA and browser-oriented routes.
 When `enabled = false`, the server still exposes the machine API and `/health`, but `/`, `/auth/*`, SPA client routes, `/api/v1/auth/me`, and `/api/v1/setup/*` all return `404`.
 
 `server.web.url` is not a secondary web host. Fabro supports a single public origin for API and web traffic. In local development that can be plain HTTP such as `http://localhost:3000` or `http://127.0.0.1:3000`. In production, operators are responsible for terminating HTTPS upstream.
+
+When the external origin is assigned at deployment time, set `FABRO_WEB_URL` in the server process environment. It overrides `server.web.url` for the canonical browser/API origin and is the recommended control for Tailscale Services deployments.
 
 ### `[server.auth]` section
 
@@ -315,6 +318,8 @@ Fabro always serves the GitHub webhook handler at `POST /api/v1/webhooks/github`
 - `strategy = "tailscale_funnel"`: opt-in for Tailscale-hosted machines without a stable public URL. Fabro runs `tailscale funnel <server-port>`, exposes the main server on that Funnel URL, and best-effort updates the GitHub App webhook URL to `<funnel-url>/api/v1/webhooks/github`. Requires a TCP listener and `GITHUB_APP_WEBHOOK_SECRET`.
 - `strategy` unset: Fabro still accepts signed webhook deliveries on `/api/v1/webhooks/github` when the secret is present, but it does not run `tailscale funnel` and does not update the GitHub App webhook URL.
 
+Tailscale Services and Tailscale Funnel are different ingress features. Services are private to the tailnet and work well for Fabro's web UI and CLI API access, but github.com cannot deliver webhooks to a private Service URL. Use `tailscale_funnel`, `server_url`, or another public relay when GitHub webhook delivery is required.
+
 Incoming webhooks are authenticated only by GitHub's `X-Hub-Signature-256` HMAC signature, not by Fabro's bearer/session auth.
 
 ### `[run.checkpoint]` section
@@ -325,8 +330,9 @@ Configure checkpoint behavior for all runs.
 |---|---|
 | `exclude_globs` | Glob patterns for files to exclude from checkpoint commits (for example, `["**/node_modules/**"]`) |
 | `skip_git_hooks` | When `true`, Fabro-managed run-branch checkpoint commits bypass local Git commit hooks. Defaults to `false`. Does not affect Fabro workflow `[[run.hooks]]` or metadata-branch snapshots. |
+| `commit_timeout` | Max duration for the per-node run-branch checkpoint commit (e.g. `"30s"`, `"10m"`). This commit runs repository commit hooks unless `skip_git_hooks` is `true`. Defaults to `"30s"`. |
 
-`exclude_globs` replaces across layers — the highest-precedence layer wins wholesale. `skip_git_hooks` uses normal override semantics. See [Run Configuration — Checkpoint](/execution/run-configuration#runcheckpoint) for per-run configuration.
+`exclude_globs` replaces across layers — the highest-precedence layer wins wholesale. `skip_git_hooks` and `commit_timeout` use normal override semantics. See [Run Configuration — Checkpoint](/execution/run-configuration#runcheckpoint) for per-run configuration.
 
 ## Secrets and environment variables
 

@@ -5,6 +5,7 @@
 
 use std::path::{Path, PathBuf};
 
+use fabro_types::settings::ResolveError;
 #[cfg(feature = "daytona")]
 use fabro_types::settings::run::DockerfileSource as ResolvedDockerfileSource;
 use fabro_types::settings::run::{EnvironmentNetworkMode, RunEnvironmentSettings};
@@ -70,8 +71,36 @@ pub fn docker_config_from_environment(
     settings: &RunEnvironmentSettings,
     skip_clone: bool,
 ) -> DockerSandboxOptions {
-    let mut env_vars = settings
-        .resolve_env(process_env_var)
+    // No vault is available on this path (server preflight / manifest), so
+    // resolve `{{ env.* }}` against the process environment and let every other
+    // token (including `{{ secrets.* }}`) fall back to its source form.
+    let env = settings
+        .env
+        .iter()
+        .map(|(key, value)| (key.clone(), value.resolve_or_source(process_env_var)))
+        .collect();
+    docker_config_from_environment_env(settings, skip_clone, env)
+}
+
+#[cfg(feature = "docker")]
+pub fn docker_config_from_environment_with_secrets(
+    settings: &RunEnvironmentSettings,
+    skip_clone: bool,
+    secrets_lookup: impl FnMut(&str) -> Option<String>,
+) -> Result<DockerSandboxOptions, ResolveError> {
+    let env = settings.resolve_env(process_env_var, secrets_lookup)?;
+    Ok(docker_config_from_environment_env(
+        settings, skip_clone, env,
+    ))
+}
+
+#[cfg(feature = "docker")]
+fn docker_config_from_environment_env(
+    settings: &RunEnvironmentSettings,
+    skip_clone: bool,
+    env: std::collections::HashMap<String, String>,
+) -> DockerSandboxOptions {
+    let mut env_vars = env
         .into_iter()
         .map(|(key, value)| format!("{key}={value}"))
         .collect::<Vec<_>>();

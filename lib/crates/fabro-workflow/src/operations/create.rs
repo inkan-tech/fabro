@@ -432,14 +432,14 @@ mod tests {
 
     use chrono::{Local, TimeZone, Utc};
     use fabro_config::{
-        ReplaceMap, RunExecutionLayer, RunGoalLayer, RunLayer, RunModelLayer, RunPullRequestLayer,
-        WorkflowSettingsBuilder,
+        PrepareStep, ReplaceMap, RunExecutionLayer, RunGoalLayer, RunLayer, RunModelLayer,
+        RunPrepareLayer, RunPullRequestLayer, WorkflowSettingsBuilder,
     };
     use fabro_graphviz::graph::AttrValue;
     use fabro_store::Database;
     use fabro_types::settings::InterpString;
     use fabro_types::settings::run::RunMode;
-    use fabro_types::{WorkflowSettings, fixtures, test_support};
+    use fabro_types::{EventBody, WorkflowSettings, fixtures, test_support};
     use fabro_util::error::collect_chain;
     use fabro_validate::Severity;
     use object_store::local::LocalFileSystem;
@@ -1387,6 +1387,91 @@ mod tests {
                 .to_path_buf()
         );
         assert!(created.run_dir.is_dir());
+    }
+
+    #[tokio::test]
+    async fn create_persists_secret_tokens_in_run_created_settings_source_form() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage_root = dir.path().join("storage");
+        let store = memory_store();
+        let created = create(
+            &store,
+            CreateRunInput {
+                workflow: WorkflowInput::DotSource {
+                    source:   MINIMAL_DOT.to_string(),
+                    base_dir: None,
+                },
+                settings: settings_from_run_layer(RunLayer {
+                    prepare: Some(RunPrepareLayer {
+                        steps:   vec![PrepareStep {
+                            script:  None,
+                            command: Some(vec![
+                                InterpString::parse("deploy"),
+                                InterpString::parse("{{ secrets.DEPLOY_TOKEN }}"),
+                            ]),
+                            env:     HashMap::from([(
+                                "DEPLOY_TOKEN".to_string(),
+                                InterpString::parse("{{ secrets.DEPLOY_TOKEN }}"),
+                            )]),
+                        }],
+                        timeout: None,
+                    }),
+                    execution: Some(RunExecutionLayer {
+                        mode: Some(RunMode::DryRun),
+                        ..RunExecutionLayer::default()
+                    }),
+                    ..RunLayer::default()
+                }),
+                vars: HashMap::new(),
+                cwd: dir.path().to_path_buf(),
+                workflow_slug: Some("secret-source".to_string()),
+                workflow_path: None,
+                workflow_bundle: None,
+                submitted_manifest_bytes: None,
+                run_id: Some(fixtures::RUN_1),
+                title: None,
+                automation: None,
+                git: None,
+                fork_source_ref: None,
+                parent_id: None,
+                provenance: test_support::test_run_provenance(),
+                configured_providers: Vec::new(),
+                web_url: None,
+            },
+            storage_root,
+            test_catalog(),
+        )
+        .await
+        .unwrap();
+
+        let run_store = store.open_run(&created.run_id).await.unwrap();
+        let events = run_store.list_events().await.unwrap();
+        let run_created = events
+            .iter()
+            .find_map(|event| match &event.event.body {
+                EventBody::RunCreated(props) => Some(props),
+                _ => None,
+            })
+            .expect("run.created event should be persisted");
+        let step = run_created
+            .settings
+            .run
+            .prepare
+            .steps
+            .first()
+            .expect("prepare step should be persisted");
+
+        let fabro_types::settings::run::PreparedStepRun::Command { command } = &step.run else {
+            panic!("expected command prepare step");
+        };
+        assert_eq!(command, &vec![
+            "deploy".to_string(),
+            "{{ secrets.DEPLOY_TOKEN }}".to_string()
+        ]);
+        assert_eq!(
+            step.env.get("DEPLOY_TOKEN").map(String::as_str),
+            Some("{{ secrets.DEPLOY_TOKEN }}")
+        );
     }
 
     #[tokio::test]

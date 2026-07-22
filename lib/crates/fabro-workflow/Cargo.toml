@@ -63,7 +63,6 @@ hex.workspace = true
 sha2 = { workspace = true }
 mime_guess.workspace = true
 miette.workspace = true
-shlex = "1"
 git2.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true
@@ -86,3 +85,4 @@ httpmock = "0.8"
 fabro-macros = { path = "../fabro-macros" }
 fabro-test = { workspace = true }
 fabro-types = { path = "../fabro-types", features = ["test-support"] }
+shlex = "1"

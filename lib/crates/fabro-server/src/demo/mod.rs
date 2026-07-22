@@ -1088,8 +1088,8 @@ mod runs {
     use fabro_api::types::*;
     use fabro_types::settings::run::{
         EnvironmentImageSettings, EnvironmentLifecycleSettings, EnvironmentProvider,
-        EnvironmentResourcesSettings, EnvironmentSettings, RunEnvironmentSettings, RunGoal,
-        RunModelSettings, RunNamespace, RunPrepareSettings,
+        EnvironmentResourcesSettings, EnvironmentSettings, PreparedStep, PreparedStepRun,
+        RunEnvironmentSettings, RunGoal, RunModelSettings, RunNamespace, RunPrepareSettings,
     };
     use fabro_types::settings::{InterpString, ProjectNamespace, WorkflowNamespace};
     use fabro_types::{
@@ -1802,7 +1802,20 @@ mod runs {
                     ..RunModelSettings::default()
                 },
                 prepare: RunPrepareSettings {
-                    commands:   vec!["bun install".into(), "bun run typecheck".into()],
+                    steps:      vec![
+                        PreparedStep {
+                            run: PreparedStepRun::Script {
+                                script: "bun install".to_string(),
+                            },
+                            env: HashMap::new(),
+                        },
+                        PreparedStep {
+                            run: PreparedStepRun::Script {
+                                script: "bun run typecheck".to_string(),
+                            },
+                            env: HashMap::new(),
+                        },
+                    ],
                     timeout_ms: 120_000,
                 },
                 environment: RunEnvironmentSettings::from_environment(

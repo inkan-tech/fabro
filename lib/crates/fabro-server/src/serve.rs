@@ -649,6 +649,7 @@ where
     let storage = Storage::new(&data_dir);
     let vault_path = storage.secrets_path();
     let variables_path = storage.variables_path();
+    let sqlite_path = storage.sqlite_path();
     let server_env_path = storage.runtime_directory().env_path();
     runtime_settings.server_settings = runtime_settings
         .server_settings
@@ -680,6 +681,29 @@ where
     let shared_settings = Arc::new(RwLock::new(disk_document));
     std::fs::create_dir_all(&data_dir)
         .with_context(|| format!("creating data directory {}", data_dir.display()))?;
+    let database = fabro_db::Database::connect(&sqlite_path).await?;
+    database.migrate().await?;
+    fabro_variable::import_legacy_json_once(database.pool(), &variables_path)
+        .await
+        .with_context(|| {
+            format!(
+                "importing legacy variables file {}",
+                variables_path.display()
+            )
+        })?;
+    let legacy_environment_dir = active_config_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("environments");
+    fabro_environment::import_legacy_directory_once(database.pool(), &legacy_environment_dir)
+        .await
+        .with_context(|| {
+            format!(
+                "importing legacy environments directory {}",
+                legacy_environment_dir.display()
+            )
+        })?;
+    let db_pool = database.clone_pool();
     let max_concurrent_runs = resolved_server_settings.scheduler.max_concurrent_runs;
     // In `--watch-web` mode the build watcher will populate `dist/` shortly
     // after startup. Treat that the same as assets being present so the web
@@ -735,7 +759,7 @@ where
         store,
         artifact_store,
         vault_path,
-        variables_path,
+        db_pool,
         preloaded_vault: Some(startup_vault),
         server_secrets,
         env_lookup,

@@ -13,9 +13,16 @@
  */
 
 
+// May contain unused imports in some cases
+// @ts-ignore
+import type { McpHttpProtocol } from './mcp-http-protocol';
 
+/**
+ * HTTP transport that connects to a remote MCP server URL.
+ */
 export interface McpTransportHttp {
     'type': McpTransportHttpTypeEnum;
+    'protocol'?: McpHttpProtocol;
     'url': string;
     'headers': { [key: string]: string; };
 }

@@ -1,11 +1,13 @@
 mod auth_sessions;
 mod automations;
 mod cli_auth_token;
+mod compression;
 mod docs;
 mod environments;
 mod events;
 mod install;
 mod install_openai_compatible;
+mod mcp_servers;
 mod routing;
 mod run_files;
 mod runs;

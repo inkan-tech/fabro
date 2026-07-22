@@ -17,6 +17,7 @@ use fabro_model::ProviderId;
 use fabro_server::install::{
     InstallAppState, InstallFinishHook, InstallFinishInfo, build_install_router,
 };
+use fabro_server::test_support::test_environment_from_storage_dir;
 use fabro_util::Home;
 use fabro_vault::Vault;
 use httpmock::Method::GET;
@@ -52,6 +53,22 @@ fn assert_sandbox_provider_policy(
     assert_eq!(resolved.local.enabled, local_enabled);
     assert_eq!(resolved.docker.enabled, docker_enabled);
     assert_eq!(resolved.daytona.enabled, daytona_enabled);
+}
+
+async fn seeded_default_environment(
+    temp_dir: &tempfile::TempDir,
+) -> fabro_environment::Environment {
+    test_environment_from_storage_dir(temp_dir.path(), "default")
+        .await
+        .expect("install test environment store should load")
+        .expect("default environment should be seeded")
+}
+
+fn assert_no_legacy_environment_dir(temp_dir: &tempfile::TempDir) {
+    assert!(
+        !temp_dir.path().join("environments").exists(),
+        "install should not write legacy environments/*.toml files"
+    );
 }
 
 async fn mock_daytona_auth_probe(server: &MockServer) -> httpmock::Mock<'_> {
@@ -935,17 +952,13 @@ async fn token_install_finish_persists_settings_env_and_vault() {
         "settings.toml should not contain environment catalog entries"
     );
     assert_sandbox_provider_policy(&settings, true, true, false);
-    let environment_dir = temp_dir.path().join("environments");
-    let mut environment_files = std::fs::read_dir(&environment_dir)
-        .unwrap()
-        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
-        .collect::<Vec<_>>();
-    environment_files.sort();
-    assert_eq!(environment_files, vec!["default.toml"]);
-    let default_environment =
-        std::fs::read_to_string(environment_dir.join("default.toml")).unwrap();
-    assert!(default_environment.contains("provider = \"docker\""));
-    assert!(default_environment.contains("docker = \"buildpack-deps:noble\""));
+    assert_no_legacy_environment_dir(&temp_dir);
+    let default_environment = seeded_default_environment(&temp_dir).await;
+    assert_eq!(default_environment.settings.provider.to_string(), "docker");
+    assert_eq!(
+        default_environment.settings.image.docker.as_deref(),
+        Some("buildpack-deps:noble")
+    );
     let resolved = ServerSettingsBuilder::from_toml(&settings)
         .expect("settings should resolve")
         .server;
@@ -2588,9 +2601,9 @@ async fn sandbox_switching_from_daytona_to_docker_drops_saved_key() {
         settings.contains("[run.environment]"),
         "settings.toml should select the default environment"
     );
-    let default_environment =
-        std::fs::read_to_string(temp_dir.path().join("environments/default.toml")).unwrap();
-    assert!(default_environment.contains("provider = \"docker\""));
+    assert_no_legacy_environment_dir(&temp_dir);
+    let default_environment = seeded_default_environment(&temp_dir).await;
+    assert_eq!(default_environment.settings.provider.to_string(), "docker");
     let vault = Vault::load(Storage::new(temp_dir.path()).secrets_path()).unwrap();
     assert_eq!(vault.get("DAYTONA_API_KEY"), None);
 }
@@ -2708,17 +2721,14 @@ async fn daytona_install_finish_writes_settings_and_vault_secret() {
         "settings.toml should not contain environment catalog entries"
     );
     assert_sandbox_provider_policy(&settings, true, false, true);
-    let environment_dir = temp_dir.path().join("environments");
-    let mut environment_files = std::fs::read_dir(&environment_dir)
-        .unwrap()
-        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
-        .collect::<Vec<_>>();
-    environment_files.sort();
-    assert_eq!(environment_files, vec!["default.toml"]);
-    let default_environment =
-        std::fs::read_to_string(environment_dir.join("default.toml")).unwrap();
-    assert!(default_environment.contains("provider = \"daytona\""));
-    assert!(default_environment.contains("buildpack-deps:noble"));
+    assert_no_legacy_environment_dir(&temp_dir);
+    let default_environment = seeded_default_environment(&temp_dir).await;
+    assert_eq!(default_environment.settings.provider.to_string(), "daytona");
+    assert!(matches!(
+        default_environment.settings.image.dockerfile.as_ref(),
+        Some(fabro_types::settings::run::DockerfileSource::Inline(content))
+            if content.contains("buildpack-deps:noble")
+    ));
 
     let vault = Vault::load(Storage::new(temp_dir.path()).secrets_path()).unwrap();
     assert_eq!(vault.get("DAYTONA_API_KEY"), Some(api_key));

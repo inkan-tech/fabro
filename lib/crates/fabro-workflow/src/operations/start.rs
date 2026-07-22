@@ -10,16 +10,15 @@ use fabro_mcp::config::McpServerSettings;
 use fabro_model::{Catalog, FallbackTarget, ProviderId};
 use fabro_sandbox::daytona::DaytonaConfig;
 use fabro_sandbox::from_environment::{
-    daytona_config_from_environment, docker_config_from_environment,
+    daytona_config_from_environment, docker_config_from_environment_with_secrets,
     local_working_directory_from_environment,
 };
 use fabro_sandbox::{DockerSandboxOptions, SandboxSpec};
 use fabro_static::EnvVars;
 use fabro_types::settings::run::{
-    ApprovalMode, HookDefinition as ResolvedHookDefinition, HookEvent as ResolvedHookEvent,
-    HookType as ResolvedHookType, McpServerSettings as ResolvedMcpServerSettings,
-    PullRequestSettings, ResolvedMcpEntry, RunMode, RunModelSettings as ResolvedRunModelSettings,
-    RunNamespace as ResolvedRunSettings, TlsMode as ResolvedTlsMode,
+    ApprovalMode, McpServerSettings as ResolvedMcpServerSettings, PullRequestSettings,
+    ResolvedMcpEntry, RunMode, RunModelSettings as ResolvedRunModelSettings,
+    RunNamespace as ResolvedRunSettings, RunPrepareSettings as ResolvedRunPrepareSettings,
 };
 use fabro_types::settings::{ModelRegistry, ResolvedModelRef};
 use fabro_types::{ManifestPath, RunId, RunRunnableSource, SandboxProviderKind};
@@ -45,7 +44,7 @@ use crate::pipeline::{
 use crate::records::Checkpoint;
 use crate::run_control::RunControlState;
 use crate::run_metadata::metadata_branch_name;
-use crate::run_options::{GitCheckpointOptions, LifecycleOptions, RunOptions};
+use crate::run_options::{GitCheckpointOptions, LifecycleOptions, RunOptions, SetupCommand};
 use crate::run_status::{FailureReason, RunStatus};
 use crate::runtime_store::RunStoreHandle;
 use crate::services::FabroRunToolServices;
@@ -374,12 +373,22 @@ impl RunSession {
         let configured =
             configured_providers_for_start(services.vault.as_ref(), Arc::clone(&catalog)).await;
         let llm = resolve_start_llm(catalog.as_ref(), &configured, resolved)?;
+        let vault_guard = match services.vault.as_ref() {
+            Some(vault) => Some(vault.read().await),
+            None => None,
+        };
+        // Token-only secrets lookup over the vault read guard, shared across
+        // every run-boundary resolver. A missing or non-Token secret becomes
+        // `None`, so resolution fails closed with a secret error.
+        let secret_lookup = |name: &str| vault_token_lookup(vault_guard.as_deref(), name);
         let mcp_servers = resolved
             .agent
             .mcps
             .iter()
             .map(|(key, entry)| match entry {
-                ResolvedMcpEntry::Resolved(server) => runtime_mcp_server(server, process_env_var),
+                ResolvedMcpEntry::Resolved(server) => {
+                    runtime_mcp_server(server, process_env_var, secret_lookup)
+                }
                 // References must be resolved to concrete servers before the run
                 // spec is persisted (server-side run-preparation pass). Reaching
                 // worker startup with an unresolved reference is an invariant
@@ -410,19 +419,15 @@ impl RunSession {
                 SandboxSpec::Local { working_directory }
             }
             SandboxProviderKind::Docker => SandboxSpec::Docker {
-                config:           resolve_docker_config(resolved),
+                config:           resolve_docker_config(resolved, secret_lookup)?,
                 github_app:       services.github_app.clone(),
                 run_id:           Some(record.run_id),
                 clone_origin_url: record.repo_origin_url().map(str::to_string),
                 clone_branch:     record.base_branch().map(str::to_string),
             },
             SandboxProviderKind::Daytona => {
-                let api_key = match &services.vault {
-                    Some(v) => v
-                        .read()
-                        .await
-                        .get(EnvVars::DAYTONA_API_KEY)
-                        .map(str::to_string),
+                let api_key = match vault_guard.as_deref() {
+                    Some(vault) => vault.get(EnvVars::DAYTONA_API_KEY).map(str::to_string),
                     None => None,
                 };
                 SandboxSpec::Daytona {
@@ -436,7 +441,10 @@ impl RunSession {
             }
         };
 
-        let toml_env = resolved.environment.resolve_env(process_env_var);
+        let toml_env = resolved
+            .environment
+            .resolve_env(process_env_var, secret_lookup)
+            .map_err(|err| Error::engine_with_source("failed to resolve run environment", err))?;
         let github_permissions: Option<HashMap<String, String>> =
             (!services.github_permissions.is_empty()).then(|| services.github_permissions.clone());
         let sandbox_env = SandboxEnvSpec {
@@ -453,6 +461,9 @@ impl RunSession {
         };
 
         let pr_config = resolved.pull_request.clone();
+        let setup_commands =
+            runtime_setup_commands(&resolved.prepare, process_env_var, secret_lookup)?;
+        drop(vault_guard);
 
         Ok(Self {
             cancel_token: services.cancel_token,
@@ -472,11 +483,11 @@ impl RunSession {
             steering_hub: services.steering_hub,
             on_node: services.on_node,
             lifecycle: LifecycleOptions {
-                setup_commands:           resolved.prepare.commands.clone(),
+                setup_commands,
                 setup_command_timeout_ms: resolved.prepare.timeout_ms,
             },
             hooks: fabro_hooks::HookSettings {
-                hooks: resolved.hooks.iter().map(runtime_hook_definition).collect(),
+                hooks: resolved.hooks.clone(),
             },
             sandbox_env,
             seed_context: None,
@@ -551,6 +562,10 @@ fn process_env_var(name: &str) -> Option<String> {
     std::env::var(name).ok()
 }
 
+fn vault_token_lookup(vault: Option<&Vault>, name: &str) -> Option<String> {
+    vault.and_then(|vault| fabro_auth::vault_get_token(vault, name).ok().flatten())
+}
+
 async fn load_accepted_run_definition(
     run_store: &RunStoreHandle,
     blob_id: fabro_types::RunBlobId,
@@ -575,8 +590,16 @@ fn resolve_daytona_config(settings: &ResolvedRunSettings) -> DaytonaConfig {
     daytona_config_from_environment(&settings.environment, !settings.clone.enabled)
 }
 
-fn resolve_docker_config(settings: &ResolvedRunSettings) -> DockerSandboxOptions {
-    docker_config_from_environment(&settings.environment, !settings.clone.enabled)
+fn resolve_docker_config(
+    settings: &ResolvedRunSettings,
+    secrets_lookup: impl FnMut(&str) -> Option<String>,
+) -> Result<DockerSandboxOptions, Error> {
+    docker_config_from_environment_with_secrets(
+        &settings.environment,
+        !settings.clone.enabled,
+        secrets_lookup,
+    )
+    .map_err(|err| Error::engine_with_source("failed to resolve Docker environment config", err))
 }
 
 fn resolve_start_llm(
@@ -681,93 +704,64 @@ impl ModelRegistry for CatalogModelRegistry<'_> {
 }
 
 /// Build the launch-time MCP config from resolved settings, resolving any
-/// `{{ env.* }}` tokens in the transport (`command`/`url`/`env`/`headers`)
-/// against the worker process environment — the run boundary where the MCP is
-/// actually launched.
+/// `{{ env.* }}` and `{{ secrets.* }}` tokens in the transport
+/// (`command`/`url`/`env`/`headers`) against the worker process environment and
+/// vault — the run boundary where the MCP is actually launched.
 ///
 /// The resolution itself lives on the type
 /// ([`McpServerSettings::resolve_transport_env`]) so `fabro run` (here) and
 /// `fabro exec` share one resolver; this wrapper just adds the server name to
 /// the error. MCP transport strings are carried in source form out of the
 /// config resolve layer so `fabro validate` stays portable (it never requires
-/// env to be set), and a referenced env var that is unset is a hard error —
-/// no fallback to the unresolved source.
+/// env to be set), and a referenced env var or secret that is unset is a hard
+/// error — no fallback to the unresolved source.
 fn runtime_mcp_server(
     settings: &ResolvedMcpServerSettings,
     env_lookup: impl FnMut(&str) -> Option<String>,
+    secrets_lookup: impl FnMut(&str) -> Option<String>,
 ) -> Result<McpServerSettings, Error> {
-    settings.resolve_transport_env(env_lookup).map_err(|err| {
-        Error::engine_with_source(
-            format!("failed to resolve MCP server {:?}", settings.name),
-            err,
-        )
-    })
+    settings
+        .resolve_transport_env(env_lookup, secrets_lookup)
+        .map_err(|err| {
+            Error::engine_with_source(
+                format!("failed to resolve MCP server {:?}", settings.name),
+                err,
+            )
+        })
 }
 
-fn runtime_hook_definition(definition: &ResolvedHookDefinition) -> fabro_hooks::HookDefinition {
-    fabro_hooks::HookDefinition {
-        name:       definition.name.clone(),
-        event:      match definition.event {
-            ResolvedHookEvent::RunStart => fabro_hooks::HookEvent::RunStart,
-            ResolvedHookEvent::RunComplete => fabro_hooks::HookEvent::RunComplete,
-            ResolvedHookEvent::RunFailed => fabro_hooks::HookEvent::RunFailed,
-            ResolvedHookEvent::StageStart => fabro_hooks::HookEvent::StageStart,
-            ResolvedHookEvent::StageComplete => fabro_hooks::HookEvent::StageComplete,
-            ResolvedHookEvent::StageFailed => fabro_hooks::HookEvent::StageFailed,
-            ResolvedHookEvent::StageRetrying => fabro_hooks::HookEvent::StageRetrying,
-            ResolvedHookEvent::EdgeSelected => fabro_hooks::HookEvent::EdgeSelected,
-            ResolvedHookEvent::ParallelStart => fabro_hooks::HookEvent::ParallelStart,
-            ResolvedHookEvent::ParallelComplete => fabro_hooks::HookEvent::ParallelComplete,
-            ResolvedHookEvent::SandboxReady => fabro_hooks::HookEvent::SandboxReady,
-            ResolvedHookEvent::SandboxCleanup => fabro_hooks::HookEvent::SandboxCleanup,
-            ResolvedHookEvent::CheckpointSaved => fabro_hooks::HookEvent::CheckpointSaved,
-            ResolvedHookEvent::PreToolUse => fabro_hooks::HookEvent::PreToolUse,
-            ResolvedHookEvent::PostToolUse => fabro_hooks::HookEvent::PostToolUse,
-            ResolvedHookEvent::PostToolUseFailure => fabro_hooks::HookEvent::PostToolUseFailure,
-        },
-        command:    definition.command.clone(),
-        hook_type:  definition.hook_type.as_ref().map(runtime_hook_type),
-        matcher:    definition.matcher.clone(),
-        blocking:   definition.blocking,
-        timeout_ms: definition.timeout_ms,
-        sandbox:    definition.sandbox,
-    }
-}
-
-fn runtime_hook_type(hook_type: &ResolvedHookType) -> fabro_hooks::HookType {
-    match hook_type {
-        ResolvedHookType::Command { command } => fabro_hooks::HookType::Command {
-            command: command.clone(),
-        },
-        ResolvedHookType::Http {
-            url,
-            headers,
-            allowed_env_vars,
-            tls,
-        } => fabro_hooks::HookType::Http {
-            url:              url.clone(),
-            headers:          headers.clone(),
-            allowed_env_vars: allowed_env_vars.clone(),
-            tls:              match tls {
-                ResolvedTlsMode::Verify => fabro_hooks::TlsMode::Verify,
-                ResolvedTlsMode::NoVerify => fabro_hooks::TlsMode::NoVerify,
-                ResolvedTlsMode::Off => fabro_hooks::TlsMode::Off,
-            },
-        },
-        ResolvedHookType::Prompt { prompt, model } => fabro_hooks::HookType::Prompt {
-            prompt: prompt.clone(),
-            model:  model.clone(),
-        },
-        ResolvedHookType::Agent {
-            prompt,
-            model,
-            max_tool_rounds,
-        } => fabro_hooks::HookType::Agent {
-            prompt:          prompt.clone(),
-            model:           model.clone(),
-            max_tool_rounds: *max_tool_rounds,
-        },
-    }
+/// Build the launch-time setup (prepare) commands from resolved settings,
+/// resolving any `{{ env.* }}` and `{{ secrets.* }}` tokens in each step's
+/// command and per-step env against the worker process environment and vault —
+/// the run boundary where the steps actually run.
+///
+/// The resolution itself lives on the type
+/// ([`ResolvedRunPrepareSettings::resolve_step_env`]) so prepare-step env
+/// resolution shares one resolver with the rest of the run-boundary
+/// interpolation. Prepare-step commands and env are carried in source form out
+/// of the config resolve layer so `fabro validate` stays portable (it never
+/// requires env to be set), and a referenced env var or secret that is unset is
+/// a hard error — no fallback to the unresolved source.
+fn runtime_setup_commands(
+    prepare: &ResolvedRunPrepareSettings,
+    env_lookup: impl FnMut(&str) -> Option<String>,
+    secrets_lookup: impl FnMut(&str) -> Option<String>,
+) -> Result<Vec<SetupCommand>, Error> {
+    let resolved = prepare
+        .resolve_step_env(env_lookup, secrets_lookup)
+        .map_err(|err| Error::engine_with_source("failed to resolve prepare step", err))?;
+    Ok(resolved
+        .steps
+        .into_iter()
+        .map(|step| SetupCommand {
+            // Flatten the runnable part into the shell string AFTER env
+            // resolution: an argv `command` is shell-quoted per resolved
+            // element here so an interpolated value stays a single token; a
+            // `script` is kept verbatim.
+            command: step.to_shell_command(),
+            env:     step.env,
+        })
+        .collect())
 }
 
 impl RunSession {
@@ -1130,11 +1124,15 @@ mod tests {
         RunEnvironmentLayer, RunExecutionLayer, RunLayer, StickyMap, WorkflowSettingsBuilder,
     };
     use fabro_store::Database;
-    use fabro_types::settings::run::{McpTransport as ResolvedMcpTransport, RunMode};
+    use fabro_types::settings::run::{
+        McpTransport as ResolvedMcpTransport, PreparedStep, PreparedStepRun, RunMode,
+        RunPrepareSettings,
+    };
     use fabro_types::settings::{InterpString, ModelRef};
     use fabro_types::{
         BilledModelUsage, ManifestPath, StageTiming, WorkflowSettings, fixtures, test_support,
     };
+    use fabro_vault::SecretType;
     use object_store::memory::InMemory;
 
     use super::*;
@@ -1319,7 +1317,11 @@ reasoning = false
             ..RunLayer::default()
         });
 
-        assert!(resolve_docker_config(&settings.run).skip_clone);
+        assert!(
+            resolve_docker_config(&settings.run, |_| None)
+                .unwrap()
+                .skip_clone
+        );
         assert!(resolve_daytona_config(&settings.run).skip_clone);
     }
 
@@ -1337,7 +1339,7 @@ reasoning = false
             ..ResolvedMcpServerSettings::default()
         };
 
-        let err = runtime_mcp_server(&settings, |_| None).unwrap_err();
+        let err = runtime_mcp_server(&settings, |_| None, |_| None).unwrap_err();
 
         assert_eq!(
             err.to_string(),
@@ -1346,6 +1348,261 @@ reasoning = false
         let causes = err.causes();
         assert_eq!(causes.len(), 1);
         assert!(causes[0].contains("GEMINI_API_KEY"));
+    }
+
+    #[test]
+    fn runtime_setup_command_env_resolves_secret_from_vault() {
+        let vault = token_vault("DEPLOY_TOKEN", "vault-token");
+        let prepare = prepare_with_step(script_step(
+            "echo ready",
+            HashMap::from([(
+                "DEPLOY_TOKEN".to_string(),
+                "{{ secrets.DEPLOY_TOKEN }}".to_string(),
+            )]),
+        ));
+
+        let commands =
+            runtime_setup_commands(&prepare, |_| None, vault_secret_lookup(&vault)).unwrap();
+
+        assert_eq!(commands.len(), 1);
+        assert_eq!(
+            commands[0].env.get("DEPLOY_TOKEN").map(String::as_str),
+            Some("vault-token")
+        );
+    }
+
+    #[test]
+    fn runtime_setup_command_secret_argv_is_resolved_before_shell_quoting() {
+        let malicious = "x'; touch PWNED; echo '";
+        let vault = token_vault("USER_INPUT", malicious);
+        let prepare = prepare_with_step(command_step(
+            &["echo", "{{ secrets.USER_INPUT }}"],
+            HashMap::new(),
+        ));
+
+        let commands =
+            runtime_setup_commands(&prepare, |_| None, vault_secret_lookup(&vault)).unwrap();
+        let tokens =
+            shlex::split(&commands[0].command).expect("resolved command should remain valid shell");
+
+        assert_eq!(tokens, vec!["echo".to_string(), malicious.to_string()]);
+        assert_eq!(
+            tokens.len(),
+            2,
+            "injected shell syntax leaked extra tokens: {}",
+            commands[0].command
+        );
+    }
+
+    #[test]
+    fn runtime_mcp_server_env_resolves_secret_from_vault() {
+        let vault = token_vault("MCP_TOKEN", "vault-token");
+        let settings = ResolvedMcpServerSettings {
+            name: "vaulted".to_string(),
+            transport: ResolvedMcpTransport::Stdio {
+                command: vec!["mcp-server".to_string()],
+                env:     HashMap::from([(
+                    "MCP_TOKEN".to_string(),
+                    "{{ secrets.MCP_TOKEN }}".to_string(),
+                )]),
+            },
+            ..ResolvedMcpServerSettings::default()
+        };
+
+        let resolved =
+            runtime_mcp_server(&settings, |_| None, vault_secret_lookup(&vault)).unwrap();
+
+        let ResolvedMcpTransport::Stdio { env, .. } = resolved.transport else {
+            panic!("expected stdio transport");
+        };
+        assert_eq!(
+            env.get("MCP_TOKEN").map(String::as_str),
+            Some("vault-token")
+        );
+    }
+
+    #[test]
+    fn runtime_setup_command_missing_secret_fails_closed() {
+        let vault = temp_vault(&[]);
+        let prepare = prepare_with_step(command_step(
+            &["deploy", "{{ secrets.DEPLOY_TOKEN }}"],
+            HashMap::new(),
+        ));
+
+        let Err(err) = runtime_setup_commands(&prepare, |_| None, vault_secret_lookup(&vault))
+        else {
+            panic!("missing secret should fail setup command resolution");
+        };
+
+        assert_eq!(
+            err.to_string(),
+            "Engine error: failed to resolve prepare step"
+        );
+        let causes = err.causes();
+        assert_eq!(causes.len(), 1);
+        assert!(causes[0].contains("DEPLOY_TOKEN"));
+    }
+
+    #[test]
+    fn runtime_setup_command_oauth_secret_fails_closed() {
+        let vault = temp_vault(&[("DEPLOY_TOKEN", "{}", SecretType::Oauth)]);
+        let prepare = prepare_with_step(script_step(
+            "echo ready",
+            HashMap::from([(
+                "DEPLOY_TOKEN".to_string(),
+                "{{ secrets.DEPLOY_TOKEN }}".to_string(),
+            )]),
+        ));
+
+        let Err(err) = runtime_setup_commands(&prepare, |_| None, vault_secret_lookup(&vault))
+        else {
+            panic!("OAuth secret should fail setup command resolution");
+        };
+
+        assert_eq!(
+            err.to_string(),
+            "Engine error: failed to resolve prepare step"
+        );
+        assert!(err.causes()[0].contains("DEPLOY_TOKEN"));
+    }
+
+    #[test]
+    fn runtime_setup_command_file_secret_fails_closed() {
+        let vault = temp_vault(&[(EnvVars::GITHUB_APP_PRIVATE_KEY, "pem", SecretType::File)]);
+        let prepare = prepare_with_step(script_step(
+            "echo ready",
+            HashMap::from([(
+                "GITHUB_APP_PRIVATE_KEY".to_string(),
+                "{{ secrets.GITHUB_APP_PRIVATE_KEY }}".to_string(),
+            )]),
+        ));
+
+        let Err(err) = runtime_setup_commands(&prepare, |_| None, vault_secret_lookup(&vault))
+        else {
+            panic!("file secret should fail setup command resolution");
+        };
+
+        assert_eq!(
+            err.to_string(),
+            "Engine error: failed to resolve prepare step"
+        );
+        assert!(err.causes()[0].contains("GITHUB_APP_PRIVATE_KEY"));
+    }
+
+    #[tokio::test]
+    async fn run_session_new_resolves_secret_tokens_from_vault_at_boundary() {
+        let temp = tempfile::tempdir().unwrap();
+        let (storage_root, _run_dir) = storage_root_and_run_dir(&temp);
+        let mut settings = settings_from_run_layer(RunLayer {
+            execution: Some(RunExecutionLayer {
+                mode: Some(RunMode::DryRun),
+                ..RunExecutionLayer::default()
+            }),
+            ..RunLayer::default()
+        });
+        settings.run.environment.env.insert(
+            "API_TOKEN".to_string(),
+            InterpString::parse("{{ secrets.DEPLOY_TOKEN }}"),
+        );
+        settings.run.prepare = prepare_with_step(command_step(
+            &["deploy", "{{ secrets.DEPLOY_TOKEN }}"],
+            HashMap::from([(
+                "DEPLOY_TOKEN".to_string(),
+                "{{ secrets.DEPLOY_TOKEN }}".to_string(),
+            )]),
+        ));
+        settings.run.agent.mcps.insert(
+            "vaulted".to_string(),
+            ResolvedMcpEntry::Resolved(ResolvedMcpServerSettings {
+                name: "vaulted".to_string(),
+                transport: ResolvedMcpTransport::Stdio {
+                    command: vec!["mcp-server".to_string()],
+                    env:     HashMap::from([(
+                        "MCP_TOKEN".to_string(),
+                        "{{ secrets.DEPLOY_TOKEN }}".to_string(),
+                    )]),
+                },
+                ..ResolvedMcpServerSettings::default()
+            }),
+        );
+        let (persisted, store) =
+            persisted_workflow_with_settings(MINIMAL_DOT, &storage_root, settings).await;
+        let emitter = Arc::new(Emitter::new(fixtures::RUN_1));
+        let registry = Arc::new(test_registry());
+        let vault = Arc::new(AsyncRwLock::new(token_vault("DEPLOY_TOKEN", "vault-token")));
+
+        let session = RunSession::new(&persisted, StartServices {
+            vault: Some(vault),
+            ..test_start_services(&store, &storage_root, emitter, registry).await
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(
+            session
+                .sandbox_env
+                .toml_env
+                .get("API_TOKEN")
+                .map(String::as_str),
+            Some("vault-token")
+        );
+        assert_eq!(
+            session.lifecycle.setup_commands[0]
+                .env
+                .get("DEPLOY_TOKEN")
+                .map(String::as_str),
+            Some("vault-token")
+        );
+        let setup_command = &session.lifecycle.setup_commands[0].command;
+        assert!(!setup_command.contains("{{ secrets.DEPLOY_TOKEN }}"));
+        assert_eq!(
+            shlex::split(setup_command).expect("setup command should be valid shell"),
+            vec!["deploy".to_string(), "vault-token".to_string()]
+        );
+        let ResolvedMcpTransport::Stdio { env, .. } = &session.llm.mcp_servers[0].transport else {
+            panic!("expected stdio MCP transport");
+        };
+        assert_eq!(
+            env.get("MCP_TOKEN").map(String::as_str),
+            Some("vault-token")
+        );
+    }
+
+    #[tokio::test]
+    async fn run_session_new_missing_secret_fails_startup() {
+        let temp = tempfile::tempdir().unwrap();
+        let (storage_root, _run_dir) = storage_root_and_run_dir(&temp);
+        let mut settings = settings_from_run_layer(RunLayer {
+            execution: Some(RunExecutionLayer {
+                mode: Some(RunMode::DryRun),
+                ..RunExecutionLayer::default()
+            }),
+            ..RunLayer::default()
+        });
+        settings.run.prepare = prepare_with_step(command_step(
+            &["deploy", "{{ secrets.DEPLOY_TOKEN }}"],
+            HashMap::new(),
+        ));
+        let (persisted, store) =
+            persisted_workflow_with_settings(MINIMAL_DOT, &storage_root, settings).await;
+        let emitter = Arc::new(Emitter::new(fixtures::RUN_1));
+        let registry = Arc::new(test_registry());
+        let vault = Arc::new(AsyncRwLock::new(temp_vault(&[])));
+
+        let Err(err) = RunSession::new(&persisted, StartServices {
+            vault: Some(vault),
+            ..test_start_services(&store, &storage_root, emitter, registry).await
+        })
+        .await
+        else {
+            panic!("missing secret should fail run startup");
+        };
+
+        assert_eq!(
+            err.to_string(),
+            "Engine error: failed to resolve prepare step"
+        );
+        assert!(err.causes()[0].contains("DEPLOY_TOKEN"));
     }
 
     #[test]
@@ -1374,7 +1631,7 @@ reasoning = false
             ..RunLayer::default()
         });
 
-        let config = resolve_docker_config(&settings.run);
+        let config = resolve_docker_config(&settings.run, |_| None).unwrap();
 
         assert_eq!(config.image, "ubuntu:24.04");
         assert_eq!(config.cpu_quota, Some(400_000));
@@ -1416,7 +1673,11 @@ reasoning = false
         assert_eq!(git.meta_branch, None);
     }
 
-    async fn persisted_workflow(dot: &str, storage_root: &Path) -> (Persisted, Arc<Database>) {
+    async fn persisted_workflow_with_settings(
+        dot: &str,
+        storage_root: &Path,
+        settings: WorkflowSettings,
+    ) -> (Persisted, Arc<Database>) {
         let store = memory_store();
         let created = crate::operations::create(
             &store,
@@ -1425,13 +1686,7 @@ reasoning = false
                     source:   dot.to_string(),
                     base_dir: None,
                 },
-                settings: settings_from_run_layer(RunLayer {
-                    execution: Some(RunExecutionLayer {
-                        mode: Some(RunMode::DryRun),
-                        ..RunExecutionLayer::default()
-                    }),
-                    ..RunLayer::default()
-                }),
+                settings,
                 vars: std::collections::HashMap::new(),
                 cwd: storage_root
                     .parent()
@@ -1457,6 +1712,21 @@ reasoning = false
         .await
         .unwrap();
         (created.persisted, store)
+    }
+
+    async fn persisted_workflow(dot: &str, storage_root: &Path) -> (Persisted, Arc<Database>) {
+        persisted_workflow_with_settings(
+            dot,
+            storage_root,
+            settings_from_run_layer(RunLayer {
+                execution: Some(RunExecutionLayer {
+                    mode: Some(RunMode::DryRun),
+                    ..RunExecutionLayer::default()
+                }),
+                ..RunLayer::default()
+            }),
+        )
+        .await
     }
 
     fn test_registry() -> HandlerRegistry {
@@ -1491,6 +1761,48 @@ reasoning = false
             on_node: None,
             registry_override: Some(registry),
             fabro_run_tools: None,
+        }
+    }
+
+    fn temp_vault(entries: &[(&str, &str, SecretType)]) -> Vault {
+        let dir = tempfile::tempdir().unwrap();
+        let mut vault = Vault::load(dir.path().join("secrets.json")).unwrap();
+        for (name, value, secret_type) in entries {
+            vault.set(name, value, *secret_type, None).unwrap();
+        }
+        vault
+    }
+
+    fn token_vault(name: &str, value: &str) -> Vault {
+        temp_vault(&[(name, value, SecretType::Token)])
+    }
+
+    fn vault_secret_lookup(vault: &Vault) -> impl FnMut(&str) -> Option<String> + '_ {
+        move |name| vault_token_lookup(Some(vault), name)
+    }
+
+    fn prepare_with_step(step: PreparedStep) -> RunPrepareSettings {
+        RunPrepareSettings {
+            steps:      vec![step],
+            timeout_ms: 1_000,
+        }
+    }
+
+    fn script_step(script: &str, env: HashMap<String, String>) -> PreparedStep {
+        PreparedStep {
+            run: PreparedStepRun::Script {
+                script: script.to_string(),
+            },
+            env,
+        }
+    }
+
+    fn command_step(command: &[&str], env: HashMap<String, String>) -> PreparedStep {
+        PreparedStep {
+            run: PreparedStepRun::Command {
+                command: command.iter().map(|value| (*value).to_string()).collect(),
+            },
+            env,
         }
     }
 

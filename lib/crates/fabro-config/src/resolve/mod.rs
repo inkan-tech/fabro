@@ -73,10 +73,10 @@ pub(crate) fn default_string(path: impl AsRef<std::path::Path>) -> String {
     path.as_ref().to_string_lossy().into_owned()
 }
 
-/// Warn when a field demoted out of the interpolation set (D2) still contains
-/// claimed template tokens. These fields are plain `String` now — `{{ vars.*
-/// }}` (which previously substituted via the run-scoped String pass, a
-/// now-removed accident) and `{{ env.* }}` are both treated as literal text.
+/// Warn when a field demoted out of the interpolation set still contains
+/// claimed template tokens. These fields are plain `String` now, so
+/// `{{ vars.* }}` (which previously substituted via the run-scoped String pass,
+/// a now-removed accident) and `{{ env.* }}` are both treated as literal text.
 /// Other plain-`String` fields still substitute `{{ vars.* }}` until the
 /// String pass itself is retired in a later slice. Unclaimed `{{ ... }}` text
 /// (jq programs, Go templates) never interpolated and does not warn.
@@ -101,6 +101,7 @@ pub(crate) fn warn_if_demoted_template(field: &str, value: Option<&str>) {
 mod tests {
     use std::collections::HashMap;
 
+    use fabro_types::settings::InterpString;
     use fabro_types::settings::run::{
         HookType, McpHttpProtocol, McpTransport, ResolvedMcpEntry, TlsMode,
     };
@@ -201,10 +202,10 @@ Authorization = "Bearer {{ env.HOOK_TOKEN }}"
         assert_eq!(
             hook.resolved_hook_type().as_deref(),
             Some(&HookType::Http {
-                url:              "https://hooks.example.com".to_string(),
+                url:              InterpString::parse("https://hooks.example.com"),
                 headers:          Some(HashMap::from([(
                     "Authorization".to_string(),
-                    "Bearer {{ env.HOOK_TOKEN }}".to_string(),
+                    InterpString::parse("Bearer {{ env.HOOK_TOKEN }}"),
                 )])),
                 allowed_env_vars: Vec::new(),
                 tls:              TlsMode::Verify,

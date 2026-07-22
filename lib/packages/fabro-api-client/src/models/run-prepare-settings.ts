@@ -13,8 +13,11 @@
  */
 
 
+// May contain unused imports in some cases
+// @ts-ignore
+import type { PreparedStep } from './prepared-step';
 
 export interface RunPrepareSettings {
-    'commands': Array<string>;
+    'steps': Array<PreparedStep>;
     'timeout_ms': number;
 }

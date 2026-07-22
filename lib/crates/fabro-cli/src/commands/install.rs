@@ -31,15 +31,14 @@ use fabro_install::{
     GITHUB_APP_VAULT_KEYS, GITHUB_INSTALL_SECRET_KEYS, InstallListenConfig, InstallPersistencePlan,
     PendingDevTokenWrite, PendingSettingsWrite, VaultSecretWrite,
     merge_server_settings as merge_server_settings_impl, prepare_dev_token_write_for_install,
-    restore_optional_file, rollback_dev_token_write, write_github_app_settings,
-    write_token_settings,
+    restore_optional_file, rollback_dev_token_write, seed_environments_in_storage,
+    write_github_app_settings, write_token_settings,
 };
 use fabro_model::catalog::CatalogProvider;
 use fabro_model::{Catalog, CredentialRef, ProviderId};
 use fabro_server::serve;
 use fabro_store::ArtifactStore;
 use fabro_types::ServerSettings;
-use fabro_types::settings::run::EnvironmentProvider;
 use fabro_types::settings::server::ServerAuthMethod;
 use fabro_types::settings::validate_public_url_with_label;
 use fabro_util::printer::Printer;
@@ -949,7 +948,9 @@ fn build_github_app_manifest(app_name: &str, port: u16, web_url: &str) -> serde_
             "pull_requests": "write",
             "checks": "write",
             "issues": "write",
-            "emails": "read"
+            "emails": "read",
+            "vulnerability_alerts": "write",
+            "organization_projects": "write"
         },
         "default_events": []
     })
@@ -2014,16 +2015,11 @@ async fn run_install_inner(args: &InstallArgs, ctx: &CommandContext) -> Result<(
     )
     .await?;
 
-    // Seed the default environment next to the settings file. The server never
-    // seeds on startup, so install is the only place the default is written;
-    // existing files are preserved, so re-running install never clobbers edits.
-    let environment_dir = config_path
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join("environments");
-    if let Err(err) =
-        fabro_environment::seed_default_environment(&environment_dir, EnvironmentProvider::Docker)
-    {
+    // Seed the default environment in SQLite. The server never seeds on
+    // startup, so install is the only place the default is written; existing
+    // rows are preserved, so re-running install never clobbers edits.
+    let environment_seed_result = seed_environments_in_storage(&storage_dir).await;
+    if let Err(err) = environment_seed_result {
         fabro_util::printerr!(
             printer,
             "  {} Failed to seed default environment: {err}",
@@ -2667,6 +2663,14 @@ client_id = "client-id"
         assert_eq!(
             manifest["setup_url"],
             serde_json::json!("https://app.example.com/setup"),
+        );
+        assert_eq!(
+            manifest["default_permissions"]["vulnerability_alerts"],
+            serde_json::json!("write"),
+        );
+        assert_eq!(
+            manifest["default_permissions"]["organization_projects"],
+            serde_json::json!("write"),
         );
     }
 

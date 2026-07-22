@@ -14,8 +14,14 @@
 
 
 
+/**
+ * Stdio transport that launches a local MCP server subprocess.
+ */
 export interface McpTransportStdio {
     'type': McpTransportStdioTypeEnum;
+    /**
+     * Command and arguments used to launch the MCP server.
+     */
     'command': Array<string>;
     'env': { [key: string]: string; };
 }

@@ -1,8 +1,9 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::path::Path;
 
 use fabro_model::catalog as model_catalog;
+use fabro_types::settings::run::McpServerSettings;
 use fabro_types::settings::{RunNamespace, WorkflowNamespace};
 use fabro_types::{ServerSettings, UserSettings, WorkflowSettings};
 use fabro_util::error::SharedError;
@@ -210,6 +211,7 @@ impl RunSettingsBuilder {
         let run = resolve_run(
             &layer.run.clone().unwrap_or_default(),
             &layer.environments,
+            &HashMap::new(),
             &mut errors,
         );
         finish_result(run, "failed to resolve run settings", errors)
@@ -327,19 +329,30 @@ fn llm_layer_to_catalog_settings(llm: LlmLayer) -> model_catalog::LlmCatalogSett
 fn provider_settings_to_catalog(
     settings: ProviderSettings,
 ) -> model_catalog::ProviderCatalogSettings {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "collapse the authoring InterpString header values to their catalog source \
+                  strings; they are re-parsed and resolved at the credential boundary"
+    )]
+    let extra_headers = settings.extra_headers.map(|headers| {
+        headers
+            .into_iter()
+            .map(|(name, value)| (name, value.as_source()))
+            .collect()
+    });
     model_catalog::ProviderCatalogSettings {
-        display_name:   settings.display_name,
-        adapter:        settings.adapter,
-        codec:          settings.codec,
-        agent_profile:  settings.agent_profile,
-        auth:           settings.auth,
+        display_name: settings.display_name,
+        adapter: settings.adapter,
+        codec: settings.codec,
+        agent_profile: settings.agent_profile,
+        auth: settings.auth,
         billing_policy: settings.billing_policy,
-        api_key_url:    settings.api_key_url,
-        base_url:       settings.base_url,
-        extra_headers:  settings.extra_headers,
-        priority:       settings.priority,
-        enabled:        settings.enabled,
-        aliases:        settings.aliases,
+        api_key_url: settings.api_key_url,
+        base_url: settings.base_url,
+        extra_headers,
+        priority: settings.priority,
+        enabled: settings.enabled,
+        aliases: settings.aliases,
     }
 }
 
@@ -444,11 +457,12 @@ fn parse_settings_toml(source: &str, kind: SettingsSource) -> Result<SettingsLay
 
 #[derive(Clone, Debug, Default)]
 pub struct WorkflowSettingsBuilder {
-    args:     SettingsLayer,
-    workflow: SettingsLayer,
-    project:  SettingsLayer,
-    user:     SettingsLayer,
-    server:   SettingsLayer,
+    args:               SettingsLayer,
+    workflow:           SettingsLayer,
+    project:            SettingsLayer,
+    user:               SettingsLayer,
+    server:             SettingsLayer,
+    mcp_server_catalog: HashMap<String, McpServerSettings>,
 }
 
 impl WorkflowSettingsBuilder {
@@ -562,6 +576,12 @@ impl WorkflowSettingsBuilder {
     }
 
     #[must_use]
+    pub fn server_mcp_catalog(mut self, catalog: HashMap<String, McpServerSettings>) -> Self {
+        self.mcp_server_catalog = catalog;
+        self
+    }
+
+    #[must_use]
     pub fn run_overrides(self, run: RunLayer) -> Self {
         self.args_layer(SettingsLayer {
             run: Some(run),
@@ -598,11 +618,20 @@ impl WorkflowSettingsBuilder {
     }
 
     pub fn build(self) -> std::result::Result<WorkflowSettings, ResolveErrors> {
-        Self::from_layer(&self.build_layer())
+        let mcp_server_catalog = self.mcp_server_catalog.clone();
+        let layer = self.build_layer();
+        Self::from_layer_with_mcp_server_catalog(&layer, &mcp_server_catalog)
     }
 
     pub(crate) fn from_layer(
         layer: &SettingsLayer,
+    ) -> std::result::Result<WorkflowSettings, ResolveErrors> {
+        Self::from_layer_with_mcp_server_catalog(layer, &HashMap::new())
+    }
+
+    fn from_layer_with_mcp_server_catalog(
+        layer: &SettingsLayer,
+        mcp_server_catalog: &HashMap<String, McpServerSettings>,
     ) -> std::result::Result<WorkflowSettings, ResolveErrors> {
         let layer = layer.clone().combine(DEFAULTS_LAYER.clone());
         let mut errors = Vec::new();
@@ -611,6 +640,7 @@ impl WorkflowSettingsBuilder {
         let run = resolve_run(
             &layer.run.clone().unwrap_or_default(),
             &layer.environments,
+            mcp_server_catalog,
             &mut errors,
         );
         finish_dense_result(
@@ -841,6 +871,51 @@ reasoning = false
             catalog
                 .effective_agent_profile(&fabro_model::ProviderId::new("acme"), Some("acme-large")),
             Some(fabro_model::AgentProfileKind::Gemini)
+        );
+    }
+
+    #[test]
+    fn server_runtime_settings_preserves_extra_header_sources() {
+        let settings = server_runtime_settings_from_toml(
+            r#"
+_version = 1
+
+[server.auth]
+methods = ["dev-token"]
+
+[llm.providers.acme]
+display_name = "Acme"
+adapter = "openai_compatible"
+base_url = "https://api.acme.test/v1"
+
+[llm.providers.acme.extra_headers]
+x-title = "My App"
+x-api-key = "{{ env.ACME_GATEWAY_API_KEY }}"
+x-team-secret = "Bearer {{ secrets.ACME_GATEWAY_TOKEN }}"
+"#,
+            None,
+            None,
+        )
+        .expect("server runtime settings should resolve");
+
+        let provider = settings
+            .llm_catalog_settings
+            .providers
+            .get("acme")
+            .expect("provider settings should be present");
+        let headers = provider
+            .extra_headers
+            .as_ref()
+            .expect("extra header settings should be present");
+
+        assert_eq!(headers.get("x-title").map(String::as_str), Some("My App"));
+        assert_eq!(
+            headers.get("x-api-key").map(String::as_str),
+            Some("{{ env.ACME_GATEWAY_API_KEY }}")
+        );
+        assert_eq!(
+            headers.get("x-team-secret").map(String::as_str),
+            Some("Bearer {{ secrets.ACME_GATEWAY_TOKEN }}")
         );
     }
 }

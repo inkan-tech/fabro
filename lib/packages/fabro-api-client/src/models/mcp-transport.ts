@@ -15,6 +15,9 @@
 
 // May contain unused imports in some cases
 // @ts-ignore
+import type { McpHttpProtocol } from './mcp-http-protocol';
+// May contain unused imports in some cases
+// @ts-ignore
 import type { McpTransportHttp } from './mcp-transport-http';
 // May contain unused imports in some cases
 // @ts-ignore
@@ -25,5 +28,6 @@ import type { McpTransportStdio } from './mcp-transport-stdio';
 
 /**
  * @type McpTransport
+ * MCP server transport configuration. The `type` field selects stdio, HTTP, or sandbox transport. Unknown `type` discriminator values are reported as domain validation errors with HTTP 422.
  */
-export type McpTransport = McpTransportHttp | McpTransportSandbox | McpTransportStdio;
+export type McpTransport = { type: 'http' } & McpTransportHttp | { type: 'sandbox' } & McpTransportSandbox | { type: 'stdio' } & McpTransportStdio;

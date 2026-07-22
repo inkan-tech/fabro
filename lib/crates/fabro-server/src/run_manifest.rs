@@ -27,7 +27,7 @@ use fabro_sandbox::{DockerSandboxOptions, Sandbox, SandboxSpec};
 use fabro_static::EnvVars;
 use fabro_types::settings::cli::OutputVerbosity;
 use fabro_types::settings::interp::InterpString;
-use fabro_types::settings::run::{EnvironmentProvider, RunGoal, RunNamespace};
+use fabro_types::settings::run::{EnvironmentProvider, McpServerSettings, RunGoal, RunNamespace};
 use fabro_types::{
     ManifestPath, RunId, RunProvenance, SandboxProviderKind, ServerSettings, WorkflowSettings,
 };
@@ -77,6 +77,7 @@ pub(crate) fn manifest_run_defaults(run: Option<&RunLayer>) -> RunLayer {
 pub(crate) fn prepare_manifest_with_environment_defaults(
     manifest_run_defaults: &RunLayer,
     manifest_environment_defaults: &MergeMap<EnvironmentLayer>,
+    manifest_mcp_server_catalog: &HashMap<String, McpServerSettings>,
     manifest: &types::RunManifest,
 ) -> Result<PreparedManifest> {
     if manifest.version != 1 {
@@ -95,10 +96,12 @@ pub(crate) fn prepare_manifest_with_environment_defaults(
 
     let args_overrides =
         manifest_args_overrides(manifest.args.as_ref()).context("failed to parse manifest args")?;
-    let mut workflow_settings_builder = WorkflowSettingsBuilder::new().server_manifest_defaults(
-        manifest_run_defaults.clone(),
-        manifest_environment_defaults.clone(),
-    );
+    let mut workflow_settings_builder = WorkflowSettingsBuilder::new()
+        .server_manifest_defaults(
+            manifest_run_defaults.clone(),
+            manifest_environment_defaults.clone(),
+        )
+        .server_mcp_catalog(manifest_mcp_server_catalog.clone());
     if let Some(run) = args_overrides.run {
         workflow_settings_builder = workflow_settings_builder.run_overrides(run);
     }
@@ -563,7 +566,7 @@ async fn build_preflight_report(
 }
 
 fn base_preflight_checks(prepared: &PreparedManifest, graph: &Graph) -> Vec<CheckResult> {
-    let setup_command_count = prepared.settings.run.prepare.commands.len();
+    let setup_command_count = prepared.settings.run.prepare.steps.len();
     let repo_summary = prepared.git.as_ref().map_or_else(
         || "unknown".to_string(),
         |git| {
@@ -1442,6 +1445,7 @@ mod tests {
         super::prepare_manifest_with_environment_defaults(
             manifest_run_defaults,
             &environment_defaults_fixture(),
+            &HashMap::new(),
             manifest,
         )
     }
@@ -1511,6 +1515,7 @@ enabled = {clone_enabled}
         let prepared = super::prepare_manifest_with_environment_defaults(
             &manifest_run_defaults(Some(&default_settings_fixture())),
             &environment_defaults,
+            &HashMap::new(),
             &manifest,
         )
         .unwrap();
@@ -1935,11 +1940,13 @@ app_id = "fixture-app-id"
         let prepared = prepare_manifest(&server_settings, &manifest).unwrap();
         let settings_json = serde_json::to_value(&prepared.settings).unwrap();
 
-        // v2 merge matrix: run.prepare.steps replaces the whole list across
-        // layers, so the higher-precedence workflow layer wins over cli.
-        assert_eq!(prepared.settings.run.prepare.commands, vec![
-            "workflow-setup".to_string()
-        ]);
+        // run.prepare.steps replaces the whole list across layers, so the
+        // higher-precedence workflow layer wins over cli.
+        assert_eq!(prepared.settings.run.prepare.steps.len(), 1);
+        assert_eq!(
+            prepared.settings.run.prepare.steps[0].to_shell_command(),
+            "workflow-setup"
+        );
         assert!(settings_json.pointer("/server").is_none());
     }
 
@@ -2317,6 +2324,7 @@ id = "daytona"
             .provider_base_url("openai", server.url("/v1"))
             .build();
         state
+            .stores
             .vault
             .write()
             .await

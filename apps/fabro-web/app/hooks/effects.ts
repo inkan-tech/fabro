@@ -72,6 +72,48 @@ export function useDebouncedValue<T>(value: T, delayMs: number): T {
 }
 
 /**
+ * Shared body of the event-listener hooks below. The target is read when the
+ * effect runs (so `window`/`document` absence and not-yet-mounted elements are
+ * handled uniformly); the listener is removed before resubscribe and on unmount;
+ * the handler sees the latest render without forcing a resubscribe. Callers must
+ * pass a stable `options` value — a fresh object every render resubscribes the
+ * listener every render.
+ */
+function useEventTargetEvent<E extends Event>(
+  target: { readonly current: EventTarget | null },
+  type: string,
+  handler: (event: E) => void,
+  options: AddEventListenerOptions | boolean | undefined,
+  active: boolean,
+): void {
+  const handlerRef = useRef(handler);
+  handlerRef.current = handler;
+
+  useEffect(() => {
+    const el = target.current;
+    if (!active || !el) return undefined;
+    const listener: EventListener = (event) => handlerRef.current(event as E);
+    el.addEventListener(type, listener, options);
+    return () => {
+      el.removeEventListener(type, listener, options);
+    };
+  }, [active, options, target, type]);
+}
+
+// Lazy getters so `window`/`document` are only touched when an effect runs, never
+// at module load (matching the previous per-hook `typeof window` checks).
+const WINDOW_TARGET = {
+  get current(): EventTarget | null {
+    return typeof window === "undefined" ? null : window;
+  },
+};
+const DOCUMENT_TARGET = {
+  get current(): EventTarget | null {
+    return typeof document === "undefined" ? null : document;
+  },
+};
+
+/**
  * Synchronizes React with a browser `window` event listener. The listener is
  * removed before resubscribe and on unmount; the handler sees the latest render.
  */
@@ -81,17 +123,7 @@ export function useWindowEvent<K extends keyof WindowEventMap>(
   options?: AddEventListenerOptions | boolean,
   active = true,
 ): void {
-  const handlerRef = useRef(handler);
-  handlerRef.current = handler;
-
-  useEffect(() => {
-    if (!active || typeof window === "undefined") return undefined;
-    const listener = (event: WindowEventMap[K]) => handlerRef.current(event);
-    window.addEventListener(type, listener as EventListener, options);
-    return () => {
-      window.removeEventListener(type, listener as EventListener, options);
-    };
-  }, [active, options, type]);
+  useEventTargetEvent(WINDOW_TARGET, type, handler, options, active);
 }
 
 /**
@@ -104,17 +136,26 @@ export function useDocumentEvent<K extends keyof DocumentEventMap>(
   options?: AddEventListenerOptions | boolean,
   active = true,
 ): void {
-  const handlerRef = useRef(handler);
-  handlerRef.current = handler;
+  useEventTargetEvent(DOCUMENT_TARGET, type, handler, options, active);
+}
 
-  useEffect(() => {
-    if (!active || typeof document === "undefined") return undefined;
-    const listener = (event: DocumentEventMap[K]) => handlerRef.current(event);
-    document.addEventListener(type, listener as EventListener, options);
-    return () => {
-      document.removeEventListener(type, listener as EventListener, options);
-    };
-  }, [active, options, type]);
+/**
+ * Synchronizes React with an event listener on a ref'd element. The listener is
+ * removed before resubscribe and on unmount; the handler sees the latest render.
+ * Unlike a JSX event prop, this can pass `{ passive: false }` so the handler may
+ * `preventDefault()` (e.g. to own wheel/⌘-scroll instead of the browser).
+ *
+ * The element must exist when the effect runs: if it renders conditionally, gate
+ * with `active` on the same condition so the effect re-runs once it mounts.
+ */
+export function useElementEvent<K extends keyof HTMLElementEventMap>(
+  ref: RefObject<HTMLElement | null>,
+  type: K,
+  handler: (event: HTMLElementEventMap[K]) => void,
+  options?: AddEventListenerOptions | boolean,
+  active = true,
+): void {
+  useEventTargetEvent(ref, type, handler, options, active);
 }
 
 /**

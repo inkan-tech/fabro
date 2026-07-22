@@ -1,13 +1,15 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use fabro_model::catalog::CatalogProvider;
-use fabro_model::{Catalog, CredentialRef, HeaderValueRef, ProviderId};
+use fabro_model::{Catalog, CredentialRef, ProviderId};
 use fabro_static::EnvVars;
+use fabro_types::settings::ResolveCtx;
 
 use crate::credential_source::{CredentialSource, ResolvedCredentials};
 use crate::resolve::{apply_openai_api_env_context, apply_openai_codex_api_context};
-use crate::{ApiCredential, EnvLookup, ResolveError, build_api_key_header};
+use crate::{ApiCredential, EnvLookup, ResolveError, build_api_key_header, resolve};
 
 #[derive(Clone)]
 pub struct EnvCredentialSource {
@@ -77,20 +79,9 @@ impl EnvCredentialSource {
     fn resolved_extra_headers(
         &self,
         provider: &CatalogProvider,
-    ) -> Result<std::collections::HashMap<String, String>, ResolveError> {
-        provider
-            .extra_headers
-            .iter()
-            .map(|(name, value_ref)| {
-                let value = match value_ref {
-                    HeaderValueRef::Literal(value) => Some(value.clone()),
-                    HeaderValueRef::Env(name) => self.lookup(name),
-                    HeaderValueRef::Vault(_) => None,
-                }
-                .ok_or_else(|| ResolveError::NotConfigured(provider.id.clone()))?;
-                Ok((name.clone(), value))
-            })
-            .collect()
+    ) -> Result<HashMap<String, String>, ResolveError> {
+        let mut ctx = ResolveCtx::new().with_env(|env_name| self.lookup(env_name));
+        resolve::resolve_extra_headers(&provider.id, &provider.extra_headers, &mut ctx)
     }
 }
 
@@ -117,7 +108,8 @@ impl CredentialSource for EnvCredentialSource {
             match self.credential_for(provider) {
                 Ok(Some(credential)) => credentials.push(credential),
                 Ok(None) => {}
-                Err(ResolveError::NotConfigured(_)) if provider.auth.is_some() => {}
+                Err(ResolveError::NotConfigured(_) | ResolveError::Interpolation { .. })
+                    if provider.auth.is_some() => {}
                 Err(err) => auth_issues.push((provider.id.clone(), err)),
             }
         }
@@ -169,6 +161,38 @@ mod tests {
 
     fn default_catalog() -> Catalog {
         catalog_with("")
+    }
+
+    /// A no-auth portkey provider whose only variation is its `extra_headers`
+    /// TOML lines.
+    fn portkey_catalog(extra_headers: &str) -> Catalog {
+        catalog_with(&format!(
+            r#"
+[providers.portkey]
+display_name = "Portkey Bedrock"
+adapter = "anthropic"
+agent_profile = "anthropic"
+base_url = "https://api.portkey.ai/v1"
+
+[providers.portkey.extra_headers]
+{extra_headers}
+
+[models."portkey-claude"]
+provider = "portkey"
+display_name = "Portkey Claude"
+family = "claude"
+default = true
+
+[models."portkey-claude".limits]
+context_window = 200000
+
+[models."portkey-claude".features]
+tools = true
+vision = true
+reasoning = true
+reasoning_effort = "levels"
+"#
+        ))
     }
 
     #[tokio::test]
@@ -280,33 +304,11 @@ reasoning = false
     }
 
     #[tokio::test]
-    async fn resolve_registers_no_auth_provider_with_env_extra_headers() {
-        let catalog = catalog_with(
+    async fn env_source_resolves_literal_and_env_header_tokens() {
+        let catalog = portkey_catalog(
             r#"
-[providers.portkey]
-display_name = "Portkey Bedrock"
-adapter = "anthropic"
-agent_profile = "anthropic"
-base_url = "https://api.portkey.ai/v1"
-
-[providers.portkey.extra_headers]
-x-portkey-api-key = { env = "PORTKEY_API_KEY" }
-x-portkey-provider = { literal = "@bedrock-prod" }
-
-[models."portkey-claude"]
-provider = "portkey"
-display_name = "Portkey Claude"
-family = "claude"
-default = true
-
-[models."portkey-claude".limits]
-context_window = 200000
-
-[models."portkey-claude".features]
-tools = true
-vision = true
-reasoning = true
-reasoning_effort = "levels"
+x-portkey-api-key = "{{ env.PORTKEY_API_KEY }}"
+x-portkey-provider = "@bedrock-prod"
 "#,
         );
         let source = test_source(&[("PORTKEY_API_KEY", "pk-live")]);
@@ -330,34 +332,8 @@ reasoning_effort = "levels"
     }
 
     #[tokio::test]
-    async fn resolve_reports_missing_required_header_for_no_auth_provider() {
-        let catalog = catalog_with(
-            r#"
-[providers.portkey]
-display_name = "Portkey Bedrock"
-adapter = "anthropic"
-agent_profile = "anthropic"
-base_url = "https://api.portkey.ai/v1"
-
-[providers.portkey.extra_headers]
-x-portkey-api-key = { env = "PORTKEY_API_KEY" }
-
-[models."portkey-claude"]
-provider = "portkey"
-display_name = "Portkey Claude"
-family = "claude"
-default = true
-
-[models."portkey-claude".limits]
-context_window = 200000
-
-[models."portkey-claude".features]
-tools = true
-vision = true
-reasoning = true
-reasoning_effort = "levels"
-"#,
-        );
+    async fn env_source_secrets_header_token_is_unavailable() {
+        let catalog = portkey_catalog(r#"x-team-secret = "{{ secrets.gateway_team_secret }}""#);
         let source = test_source(&[]);
 
         let resolved = source.resolve(&catalog).await.unwrap();
@@ -368,12 +344,38 @@ reasoning_effort = "levels"
                 .iter()
                 .any(|credential| credential.provider == ProviderId::new("portkey"))
         );
+        let (_, issue) = resolved
+            .auth_issues
+            .iter()
+            .find(|(provider, _)| provider == &ProviderId::new("portkey"))
+            .expect("secrets token should surface as an auth issue");
+        assert!(matches!(
+            issue,
+            crate::ResolveError::Interpolation { provider, .. }
+                if provider == &ProviderId::new("portkey")
+        ));
+        assert!(issue.to_string().contains("gateway_team_secret"));
+    }
+
+    #[tokio::test]
+    async fn env_source_reports_missing_env_header_for_no_auth_provider() {
+        let catalog = portkey_catalog(r#"x-portkey-api-key = "{{ env.PORTKEY_API_KEY }}""#);
+        let source = test_source(&[]);
+
+        let resolved = source.resolve(&catalog).await.unwrap();
+
         assert!(
-            resolved
-                .auth_issues
+            !resolved
+                .credentials
                 .iter()
-                .any(|(provider, issue)| provider == &ProviderId::new("portkey")
-                    && matches!(issue, crate::ResolveError::NotConfigured(_)))
+                .any(|credential| credential.provider == ProviderId::new("portkey"))
         );
+        let (_, issue) = resolved
+            .auth_issues
+            .iter()
+            .find(|(provider, _)| provider == &ProviderId::new("portkey"))
+            .expect("missing env header should surface as an auth issue");
+        assert!(matches!(issue, crate::ResolveError::Interpolation { .. }));
+        assert!(issue.to_string().contains("PORTKEY_API_KEY"));
     }
 }

@@ -13,9 +13,19 @@
  */
 
 
+// May contain unused imports in some cases
+// @ts-ignore
+import type { McpHttpProtocol } from './mcp-http-protocol';
 
+/**
+ * Sandbox transport that launches the MCP server inside the run sandbox and connects over HTTP.
+ */
 export interface McpTransportSandbox {
     'type': McpTransportSandboxTypeEnum;
+    'protocol'?: McpHttpProtocol;
+    /**
+     * Command and arguments used to launch the in-sandbox MCP server.
+     */
     'command': Array<string>;
     'port': number;
     'env': { [key: string]: string; };

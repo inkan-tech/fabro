@@ -42,9 +42,11 @@ async fn render_graph_from_manifest(
 ) -> Response {
     let manifest_run_defaults = state.manifest_run_defaults();
     let manifest_environment_defaults = state.environment_store().catalog_layer();
+    let manifest_mcp_server_catalog = state.mcp_server_store().catalog_settings();
     let prepared = match run_manifest::prepare_manifest_with_environment_defaults(
         manifest_run_defaults.as_ref(),
         manifest_environment_defaults.as_ref(),
+        &manifest_mcp_server_catalog,
         &req.manifest,
     ) {
         Ok(prepared) => prepared,
@@ -240,7 +242,7 @@ async fn load_run_dot_source(state: &AppState, id: &RunId) -> Result<String, Res
     let dot_source = if let Some(dot) = live_dot_source.filter(|d| !d.is_empty()) {
         Some(dot)
     } else {
-        match state.store.open_run_reader(id).await {
+        match state.stores.runs.open_run_reader(id).await {
             Ok(run_store) => match run_store.state().await {
                 Ok(run_state) => run_state.spec.graph_source,
                 Err(err) => {

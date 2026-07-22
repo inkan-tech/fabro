@@ -1,5 +1,6 @@
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
+use fabro_model::{Catalog, ProviderId};
 use fabro_types::settings::run::EnvironmentProvider;
 use tower::ServiceExt;
 
@@ -73,13 +74,11 @@ enabled = false
 fn daytona_disabled_app() -> (axum::Router, tempfile::TempDir) {
     let temp_dir = tempfile::tempdir().expect("daytona disabled test tempdir should be created");
     let active_config_path = temp_dir.path().join("settings.toml");
-    let environment_dir = temp_dir.path().join("environments");
-    fabro_environment::seed_default_environment(&environment_dir, EnvironmentProvider::Daytona)
-        .expect("daytona default environment should seed");
     let settings = daytona_disabled_settings();
     let state = fabro_server::test_support::TestAppStateBuilder::new()
         .runtime_settings(settings.server_settings, settings.manifest_run_defaults)
         .active_config_path(active_config_path)
+        .default_environment_provider(Some(EnvironmentProvider::Daytona))
         .build();
     (
         fabro_server::test_support::build_test_router(state),
@@ -162,7 +161,13 @@ _version = 1
         created["ask_fabro"]["unavailable_reason"],
         "sandbox_not_ready"
     );
-    assert_eq!(created["ask_fabro"]["default_model"], "gpt-5.5");
+    let default_openai_model = Catalog::builtin()
+        .default_for_provider(&ProviderId::openai())
+        .expect("the built-in OpenAI provider should have a default model");
+    assert_eq!(
+        created["ask_fabro"]["default_model"].as_str(),
+        Some(default_openai_model.id())
+    );
 
     let get_request = Request::builder()
         .method("GET")

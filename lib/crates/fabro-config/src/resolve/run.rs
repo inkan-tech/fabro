@@ -4,11 +4,11 @@ use fabro_types::settings::InterpString;
 use fabro_types::settings::run::{
     ArtifactsSettings, GitAuthorSettings, HookDefinition, HookType, InterviewProviderSettings,
     McpServerSettings, McpTransport, MergeStrategy, NotificationProviderSettings,
-    NotificationRouteSettings, PullRequestSettings, ResolvedMcpEntry, RunAgentSettings,
-    RunBranchSettings, RunCheckpointSettings, RunCloneSettings, RunExecutionSettings,
-    RunGitSettings, RunGoal, RunIntegrationsGithubSettings, RunIntegrationsSettings,
-    RunInterviewsSettings, RunMetaBranchSettings, RunModelControls, RunModelSettings, RunNamespace,
-    RunPrepareSettings, RunScmSettings, ScmGitHubSettings, TlsMode,
+    NotificationRouteSettings, PreparedStep, PreparedStepRun, PullRequestSettings,
+    ResolvedMcpEntry, RunAgentSettings, RunBranchSettings, RunCheckpointSettings, RunCloneSettings,
+    RunExecutionSettings, RunGitSettings, RunGoal, RunIntegrationsGithubSettings,
+    RunIntegrationsSettings, RunInterviewsSettings, RunMetaBranchSettings, RunModelControls,
+    RunModelSettings, RunNamespace, RunPrepareSettings, RunScmSettings, ScmGitHubSettings, TlsMode,
 };
 
 use super::{ResolveError, resolve_run_environment};
@@ -24,6 +24,7 @@ use crate::{
 pub fn resolve_run(
     layer: &RunLayer,
     environments: &MergeMap<EnvironmentLayer>,
+    mcp_server_catalog: &HashMap<String, McpServerSettings>,
     errors: &mut Vec<ResolveError>,
 ) -> RunNamespace {
     let clone = resolve_clone(layer.clone.as_ref());
@@ -73,7 +74,7 @@ pub fn resolve_run(
             .map(|(name, route)| (name.clone(), resolve_notification_route(route)))
             .collect(),
         interviews: resolve_interviews(layer.interviews.as_ref()),
-        agent: resolve_agent(layer.agent.as_ref()),
+        agent: resolve_agent(layer.agent.as_ref(), mcp_server_catalog, errors),
         hooks: layer
             .hooks
             .iter()
@@ -153,8 +154,9 @@ fn resolve_git(git: Option<&RunGitLayer>) -> RunGitSettings {
 
 #[expect(
     clippy::disallowed_methods,
-    reason = "known leak: prepare step templates collapse to raw source unresolved; strict \
-              resolution scheduled for follow-up interpolation cleanup"
+    reason = "intentional source preservation: prepare step commands and per-step env are carried \
+              in source form so `fabro validate` stays portable; their {{ env.* }} tokens resolve \
+              at the run boundary in fabro_types::settings::run::RunPrepareSettings::resolve_step_env"
 )]
 fn resolve_prepare(
     prepare: Option<&RunPrepareLayer>,
@@ -162,28 +164,47 @@ fn resolve_prepare(
 ) -> RunPrepareSettings {
     let prepare = prepare.expect("defaults.toml should provide run.prepare defaults");
 
-    let mut commands = Vec::new();
+    let mut steps = Vec::new();
     for (index, step) in prepare.steps.iter().enumerate() {
-        match (&step.script, &step.command) {
-            (Some(script), None) => commands.push(script.as_source()),
-            (None, Some(argv)) => commands.push(
-                argv.iter()
-                    .map(InterpString::as_source)
-                    .collect::<Vec<_>>()
-                    .join(" "),
-            ),
-            (Some(_), Some(_)) | (None, None) => errors.push(ResolveError::Invalid {
-                path:   format!("run.prepare.steps[{index}]"),
-                reason: "exactly one of script or command must be set".to_string(),
-            }),
-        }
+        let run = match (&step.script, &step.command) {
+            // A `script` is a raw shell snippet: carry it verbatim so the shell
+            // interprets it. Its `{{ env.* }}` tokens resolve at the run
+            // boundary.
+            (Some(script), None) => PreparedStepRun::Script {
+                script: script.as_source(),
+            },
+            // A `command` is an argv: carry it as a vector of element source
+            // strings — neither pre-joined nor shell-quoted here. Each element's
+            // `{{ env.* }}` token resolves at the run boundary, and only the
+            // resolved value is shell-quoted (resolve-then-quote), so an
+            // interpolated value can never break out of its argument and inject
+            // shell syntax.
+            (None, Some(argv)) => PreparedStepRun::Command {
+                command: argv.iter().map(InterpString::as_source).collect(),
+            },
+            (Some(_), Some(_)) | (None, None) => {
+                errors.push(ResolveError::Invalid {
+                    path:   format!("run.prepare.steps[{index}]"),
+                    reason: "exactly one of script or command must be set".to_string(),
+                });
+                continue;
+            }
+        };
+        steps.push(PreparedStep {
+            run,
+            env: step
+                .env
+                .iter()
+                .map(|(key, value)| (key.clone(), value.as_source()))
+                .collect(),
+        });
     }
 
     RunPrepareSettings {
-        commands,
-        timeout_ms: prepare.timeout.map_or(300_000, |timeout| {
-            u64::try_from(timeout.as_std().as_millis()).unwrap_or(u64::MAX)
-        }),
+        steps,
+        timeout_ms: prepare
+            .timeout
+            .map_or(300_000, |timeout| timeout.as_millis()),
     }
 }
 
@@ -202,12 +223,18 @@ fn resolve_execution(execution: Option<&RunExecutionLayer>) -> RunExecutionSetti
 
 fn resolve_checkpoint(checkpoint: Option<&RunCheckpointLayer>) -> RunCheckpointSettings {
     RunCheckpointSettings {
-        exclude_globs:  checkpoint
+        exclude_globs:     checkpoint
             .map(|checkpoint| checkpoint.exclude_globs.clone())
             .unwrap_or_default(),
-        skip_git_hooks: checkpoint
+        skip_git_hooks:    checkpoint
             .and_then(|checkpoint| checkpoint.skip_git_hooks)
             .unwrap_or(false),
+        commit_timeout_ms: checkpoint
+            .and_then(|checkpoint| checkpoint.commit_timeout)
+            .map_or(
+                RunCheckpointSettings::DEFAULT_COMMIT_TIMEOUT_MS,
+                |timeout| timeout.as_millis(),
+            ),
     }
 }
 
@@ -280,7 +307,11 @@ fn resolve_interview_provider(provider: &InterviewProviderLayer) -> InterviewPro
     }
 }
 
-fn resolve_agent(agent: Option<&RunAgentLayer>) -> RunAgentSettings {
+fn resolve_agent(
+    agent: Option<&RunAgentLayer>,
+    mcp_server_catalog: &HashMap<String, McpServerSettings>,
+    errors: &mut Vec<ResolveError>,
+) -> RunAgentSettings {
     let Some(agent) = agent else {
         return RunAgentSettings::default();
     };
@@ -288,10 +319,41 @@ fn resolve_agent(agent: Option<&RunAgentLayer>) -> RunAgentSettings {
     RunAgentSettings {
         fabro_tools: agent.fabro_tools.unwrap_or(false),
         permissions: agent.permissions,
-        mcps:        enabled_mcp_settings(&agent.mcps)
-            .map(|(name, settings)| (name, ResolvedMcpEntry::Resolved(settings)))
-            .collect(),
+        mcps:        resolve_mcp_entries(&agent.mcps, mcp_server_catalog, errors),
     }
+}
+
+fn resolve_mcp_entries(
+    mcps: &StickyMap<McpEntryLayer>,
+    mcp_server_catalog: &HashMap<String, McpServerSettings>,
+    errors: &mut Vec<ResolveError>,
+) -> HashMap<String, ResolvedMcpEntry> {
+    let mut resolved = HashMap::new();
+    for (name, entry) in mcps.iter() {
+        if !entry.is_enabled() {
+            continue;
+        }
+        match entry {
+            McpEntryLayer::Reference { id, .. } => match mcp_server_catalog.get(id) {
+                Some(server) => {
+                    resolved.insert(name.clone(), ResolvedMcpEntry::Resolved(server.clone()));
+                }
+                None => {
+                    errors.push(ResolveError::Invalid {
+                        path:   format!("run.agent.mcps.{name}.id"),
+                        reason: format!("unknown MCP server: {id}"),
+                    });
+                }
+            },
+            _ => {
+                resolved.insert(
+                    name.clone(),
+                    ResolvedMcpEntry::Resolved(resolve_mcp_entry(name, entry)),
+                );
+            }
+        }
+    }
+    resolved
 }
 
 /// Resolve an agent layer's inline MCP entries into runtime settings, dropping
@@ -300,16 +362,24 @@ fn resolve_agent(agent: Option<&RunAgentLayer>) -> RunAgentSettings {
 /// any future inline-MCP site inherits it for free.
 pub(crate) fn resolve_enabled_mcps(
     mcps: &StickyMap<McpEntryLayer>,
+    path: &str,
+    errors: &mut Vec<ResolveError>,
 ) -> HashMap<String, McpServerSettings> {
-    enabled_mcp_settings(mcps).collect()
-}
-
-fn enabled_mcp_settings(
-    mcps: &StickyMap<McpEntryLayer>,
-) -> impl Iterator<Item = (String, McpServerSettings)> + '_ {
-    mcps.iter()
-        .filter(|(_, entry)| entry.is_enabled())
-        .map(|(name, entry)| (name.clone(), resolve_mcp_entry(name, entry)))
+    let mut resolved = HashMap::new();
+    for (name, entry) in mcps.iter() {
+        if !entry.is_enabled() {
+            continue;
+        }
+        if matches!(entry, McpEntryLayer::Reference { .. }) {
+            errors.push(ResolveError::Invalid {
+                path:   format!("{path}.{name}.id"),
+                reason: "MCP catalog references are only supported in run.agent.mcps".to_string(),
+            });
+            continue;
+        }
+        resolved.insert(name.clone(), resolve_mcp_entry(name, entry));
+    }
+    resolved
 }
 
 #[expect(
@@ -361,6 +431,9 @@ pub(crate) fn resolve_mcp_entry(name: &str, entry: &McpEntryLayer) -> McpServerS
                 .map(|(key, value)| (key.clone(), value.as_source()))
                 .collect(),
         },
+        McpEntryLayer::Reference { .. } => {
+            unreachable!("MCP catalog references are resolved before inline entry conversion")
+        }
     };
 
     let (startup_timeout_secs, tool_timeout_secs) = match entry {
@@ -382,6 +455,9 @@ pub(crate) fn resolve_mcp_entry(name: &str, entry: &McpEntryLayer) -> McpServerS
             startup_timeout.map_or(10, |timeout| timeout.as_std().as_secs()),
             tool_timeout.map_or(60, |timeout| timeout.as_std().as_secs()),
         ),
+        McpEntryLayer::Reference { .. } => {
+            unreachable!("MCP catalog references are resolved before inline entry conversion")
+        }
     };
 
     McpServerSettings {
@@ -412,11 +488,6 @@ fn resolve_mcp_command(
         .unwrap_or_default()
 }
 
-#[expect(
-    clippy::disallowed_methods,
-    reason = "intentional source preservation: the hook executor re-resolves {{ env.* }} \
-              tokens at hook fire time"
-)]
 fn resolve_hook(hook: &HookEntry, index: usize, errors: &mut Vec<ResolveError>) -> HookDefinition {
     let variants = [
         hook.script.is_some() || hook.command.is_some(),
@@ -437,15 +508,9 @@ fn resolve_hook(hook: &HookEntry, index: usize, errors: &mut Vec<ResolveError>) 
 
     let hook_type = resolve_hook_type(hook);
     let command = if let Some(script) = &hook.script {
-        Some(script.as_source())
+        Some(script.clone())
     } else {
-        hook.command.as_ref().map(|command| {
-            command
-                .iter()
-                .map(InterpString::as_source)
-                .collect::<Vec<_>>()
-                .join(" ")
-        })
+        hook.command.as_ref().map(|command| join_command(command))
     };
 
     HookDefinition {
@@ -455,18 +520,29 @@ fn resolve_hook(hook: &HookEntry, index: usize, errors: &mut Vec<ResolveError>) 
         hook_type,
         matcher: hook.matcher.clone(),
         blocking: hook.blocking,
-        timeout_ms: hook
-            .timeout
-            .map(|timeout| u64::try_from(timeout.as_std().as_millis()).unwrap_or(u64::MAX)),
+        timeout_ms: hook.timeout.map(|timeout| timeout.as_millis()),
         sandbox: hook.sandbox,
     }
 }
 
+/// Join an argv-style `command` into a single space-separated [`InterpString`],
+/// preserving every `{{ ... }}` token so the executor resolves it at hook fire
+/// time. The join reconstructs the source form once, in one audited place.
 #[expect(
     clippy::disallowed_methods,
-    reason = "intentional source preservation: the hook executor re-resolves {{ env.* }} \
-              tokens at hook fire time"
+    reason = "deliberate source reconstruction: argv parts are reassembled into one InterpString \
+              whose tokens stay typed for resolution at hook fire time"
 )]
+fn join_command(command: &[InterpString]) -> InterpString {
+    InterpString::parse(
+        &command
+            .iter()
+            .map(InterpString::as_source)
+            .collect::<Vec<_>>()
+            .join(" "),
+    )
+}
+
 fn resolve_hook_type(hook: &HookEntry) -> Option<HookType> {
     if hook.script.is_some() || hook.command.is_some() {
         return None;
@@ -479,7 +555,7 @@ fn resolve_hook_type(hook: &HookEntry) -> Option<HookType> {
             Some(
                 hook.headers
                     .iter()
-                    .map(|(key, value)| (key.clone(), value.as_source()))
+                    .map(|(key, value)| (key.clone(), value.clone()))
                     .collect(),
             )
         };
@@ -490,7 +566,7 @@ fn resolve_hook_type(hook: &HookEntry) -> Option<HookType> {
             None => TlsMode::default(),
         };
         return Some(HookType::Http {
-            url: url.as_source(),
+            url: url.clone(),
             headers,
             allowed_env_vars: hook.allowed_env_vars.clone(),
             tls,
@@ -501,17 +577,16 @@ fn resolve_hook_type(hook: &HookEntry) -> Option<HookType> {
         return Some(HookType::Agent {
             prompt:          hook
                 .prompt
-                .as_ref()
-                .map(InterpString::as_source)
-                .unwrap_or_default(),
-            model:           hook.model.as_ref().map(InterpString::as_source),
+                .clone()
+                .unwrap_or_else(|| InterpString::parse("")),
+            model:           hook.model.clone(),
             max_tool_rounds: hook.max_tool_rounds,
         });
     }
 
     hook.prompt.as_ref().map(|prompt| HookType::Prompt {
-        prompt: prompt.as_source(),
-        model:  hook.model.as_ref().map(InterpString::as_source),
+        prompt: prompt.clone(),
+        model:  hook.model.clone(),
     })
 }
 
@@ -550,5 +625,100 @@ fn resolve_artifacts(artifacts: Option<&RunArtifactsLayer>) -> ArtifactsSettings
         include: artifacts
             .map(|artifacts| artifacts.include.clone())
             .unwrap_or_default(),
+    }
+}
+
+#[cfg(test)]
+mod resolve_prepare_tests {
+    use std::collections::HashMap;
+
+    use fabro_types::settings::InterpString;
+    use fabro_types::settings::run::PreparedStepRun;
+
+    use super::{ResolveError, resolve_prepare};
+    use crate::{PrepareStep, RunPrepareLayer};
+
+    fn resolve(layer: &RunPrepareLayer) -> Vec<super::PreparedStep> {
+        let mut errors: Vec<ResolveError> = Vec::new();
+        let settings = resolve_prepare(Some(layer), &mut errors);
+        assert!(errors.is_empty(), "unexpected resolve errors: {errors:?}");
+        settings.steps
+    }
+
+    #[test]
+    fn carries_per_step_env_through() {
+        let layer = RunPrepareLayer {
+            steps:   vec![PrepareStep {
+                script:  Some(InterpString::parse("setup")),
+                command: None,
+                env:     HashMap::from([(
+                    "TOKEN".to_string(),
+                    InterpString::parse("{{ env.DEPLOY_TOKEN }}"),
+                )]),
+            }],
+            timeout: None,
+        };
+
+        let steps = resolve(&layer);
+
+        assert_eq!(steps.len(), 1);
+        assert_eq!(steps[0].run, PreparedStepRun::Script {
+            script: "setup".to_string(),
+        });
+        // The per-step env survives resolution in source form (its {{ env.* }}
+        // token resolves later, at the run boundary).
+        assert_eq!(
+            steps[0].env.get("TOKEN").map(String::as_str),
+            Some("{{ env.DEPLOY_TOKEN }}")
+        );
+    }
+
+    #[test]
+    fn argv_command_elements_are_carried_in_source_form() {
+        let layer = RunPrepareLayer {
+            steps:   vec![PrepareStep {
+                script:  None,
+                command: Some(vec![
+                    InterpString::parse("echo"),
+                    InterpString::parse("hello world"),
+                    InterpString::parse("{{ env.USER_INPUT }}"),
+                ]),
+                env:     HashMap::new(),
+            }],
+            timeout: None,
+        };
+
+        let steps = resolve(&layer);
+
+        // Argv elements are carried as separate source strings, NOT joined and
+        // NOT shell-quoted here. Quoting happens at the run boundary, after
+        // `{{ env.* }}` resolution, so the resolved value (not the source
+        // token) is what gets quoted.
+        assert_eq!(steps[0].run, PreparedStepRun::Command {
+            command: vec![
+                "echo".to_string(),
+                "hello world".to_string(),
+                "{{ env.USER_INPUT }}".to_string(),
+            ],
+        });
+    }
+
+    #[test]
+    fn script_is_kept_verbatim() {
+        let layer = RunPrepareLayer {
+            steps:   vec![PrepareStep {
+                script:  Some(InterpString::parse("echo hello && ls -la")),
+                command: None,
+                env:     HashMap::new(),
+            }],
+            timeout: None,
+        };
+
+        let steps = resolve(&layer);
+
+        // A script is a raw shell snippet, not an argv: it is carried verbatim.
+        assert_eq!(steps[0].run, PreparedStepRun::Script {
+            script: "echo hello && ls -la".to_string(),
+        });
     }
 }

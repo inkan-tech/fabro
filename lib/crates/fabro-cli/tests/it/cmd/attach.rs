@@ -100,6 +100,13 @@ fn normalize_attach_json_progress_event(mut event: Value) -> Value {
             );
         }
     }
+    if let Some(model_name) = event.pointer_mut("/properties/settings/run/model/name") {
+        assert!(
+            model_name.is_string(),
+            "default model should serialize as a string"
+        );
+        *model_name = Value::String("[DEFAULT_MODEL]".to_string());
+    }
     event
 }
 
@@ -927,6 +934,7 @@ fn attach_json_errors_without_prompting_for_human_input() {
                 "include": []
               },
               "checkpoint": {
+                "commit_timeout_ms": 30000,
                 "exclude_globs": [],
                 "skip_git_hooks": false
               },
@@ -990,12 +998,12 @@ fn attach_json_errors_without_prompting_for_human_input() {
                   "speed": null
                 },
                 "fallbacks": [],
-                "name": "gpt-5.5",
+                "name": "[DEFAULT_MODEL]",
                 "provider": "openai"
               },
               "notifications": {},
               "prepare": {
-                "commands": [],
+                "steps": [],
                 "timeout_ms": 300000
               },
               "pull_request": null,

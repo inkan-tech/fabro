@@ -106,6 +106,14 @@ pub(crate) fn apply_openai_codex_api_context(
 
 #[must_use]
 pub fn build_api_key_header(policy: ApiKeyHeaderPolicy, key: String) -> ApiKeyHeader {
+    // Claude subscription tokens minted by `claude setup-token` (`sk-ant-oat…`)
+    // authenticate via `Authorization: Bearer`, not the provider's default
+    // header policy — Anthropic's `x-api-key` policy is only valid for console
+    // keys (`sk-ant-api…`). Routing the token as a bearer credential lets the
+    // anthropic adapter recognize it (it then adds the `oauth-2025-04-20` beta).
+    if key.starts_with("sk-ant-oat") {
+        return ApiKeyHeader::Bearer(key);
+    }
     match policy {
         ApiKeyHeaderPolicy::Bearer => ApiKeyHeader::Bearer(key),
         ApiKeyHeaderPolicy::Custom { name } => ApiKeyHeader::Custom { name, value: key },
@@ -1147,5 +1155,34 @@ reasoning = false
 
         assert!(!debug.contains("sk-test"));
         assert!(debug.contains("REDACTED"));
+    }
+
+    #[test]
+    fn subscription_oauth_token_forces_bearer_over_custom_policy() {
+        let header = build_api_key_header(
+            ApiKeyHeaderPolicy::Custom {
+                name: "x-api-key".to_string(),
+            },
+            "sk-ant-oat01-example".to_string(),
+        );
+        assert!(
+            matches!(header, ApiKeyHeader::Bearer(token) if token == "sk-ant-oat01-example"),
+            "oauth token should route via bearer regardless of the custom policy"
+        );
+    }
+
+    #[test]
+    fn console_key_keeps_custom_x_api_key_policy() {
+        let header = build_api_key_header(
+            ApiKeyHeaderPolicy::Custom {
+                name: "x-api-key".to_string(),
+            },
+            "sk-ant-api03-example".to_string(),
+        );
+        assert!(
+            matches!(header, ApiKeyHeader::Custom { name, value }
+                if name == "x-api-key" && value == "sk-ant-api03-example"),
+            "console key should keep the x-api-key custom header"
+        );
     }
 }

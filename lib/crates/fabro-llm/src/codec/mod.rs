@@ -90,6 +90,11 @@ pub(crate) struct CodecParams {
     /// request has none). The transport-side half of codex mode (forced
     /// streaming) is route config, not codec data.
     pub openai_codex:      bool,
+    /// Emit the `oauth-2025-04-20` Anthropic beta header. Set on the direct
+    /// Anthropic route when the credential is a Claude subscription OAuth token
+    /// (`sk-ant-oat…`), which authenticates via `Authorization: Bearer` and
+    /// requires this beta. Inert for non-anthropic codecs.
+    pub anthropic_oauth:   bool,
 }
 
 /// Placement of the Anthropic API version on the wire.

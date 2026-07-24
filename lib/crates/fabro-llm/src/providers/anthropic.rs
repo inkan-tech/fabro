@@ -86,11 +86,25 @@ impl Adapter {
     /// `provider_name` at each request-time decision.
     fn route_config(&self) -> RouteConfig {
         if self.provider_name == "anthropic" {
+            // Claude subscription tokens minted by `claude setup-token`
+            // (`sk-ant-oat…`) authenticate via `Authorization: Bearer` plus the
+            // `oauth-2025-04-20` beta, unlike console keys (`sk-ant-api…`) which
+            // use `x-api-key`. Detect the token shape and route accordingly.
+            let oauth = self
+                .http
+                .api_key
+                .as_deref()
+                .is_some_and(|key| key.starts_with("sk-ant-oat"));
             RouteConfig {
-                auth:                  AuthScheme::ApiKey,
+                auth:                  if oauth {
+                    AuthScheme::Bearer
+                } else {
+                    AuthScheme::ApiKey
+                },
                 codec_params:          CodecParams {
                     anthropic_version: AnthropicVersion::Header("2023-06-01"),
                     anthropic_beta: true,
+                    anthropic_oauth: oauth,
                     ..CodecParams::default()
                 },
                 supports_count_tokens: true,
@@ -399,5 +413,19 @@ mod tests {
         mock.assert();
         assert_eq!(count.input_tokens, 123);
         assert_eq!(count.method, InputTokenCountMethod::ProviderApi);
+    }
+
+    #[test]
+    fn console_key_routes_via_x_api_key_without_oauth_beta() {
+        let route = Adapter::new("sk-ant-api-console-key").route_config();
+        assert!(matches!(route.auth, AuthScheme::ApiKey));
+        assert!(!route.codec_params.anthropic_oauth);
+    }
+
+    #[test]
+    fn subscription_oauth_token_routes_via_bearer_with_oauth_beta() {
+        let route = Adapter::new("sk-ant-oat-subscription-token").route_config();
+        assert!(matches!(route.auth, AuthScheme::Bearer));
+        assert!(route.codec_params.anthropic_oauth);
     }
 }

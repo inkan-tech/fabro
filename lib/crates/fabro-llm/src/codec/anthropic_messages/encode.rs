@@ -17,6 +17,7 @@ use crate::types::{
 
 const CACHE_BETA_HEADER: &str = "prompt-caching-2024-07-31";
 const FAST_MODE_BETA_HEADER: &str = "fast-mode-2026-02-01";
+const OAUTH_BETA_HEADER: &str = "oauth-2025-04-20";
 
 /// Known `provider_options.anthropic` keys handled directly by the codec; not
 /// re-merged into the body.
@@ -61,6 +62,7 @@ fn build_headers(ctx: &CodecCtx<'_>) -> Vec<(String, String)> {
             ctx.request.provider_options.as_ref(),
             auto_cache(ctx),
             ctx.request.speed == Some(Speed::Fast),
+            ctx.params.anthropic_oauth,
         ) {
             headers.push(("anthropic-beta".to_string(), beta));
         }
@@ -486,6 +488,7 @@ fn build_beta_header(
     provider_options: Option<&serde_json::Value>,
     include_cache_header: bool,
     include_fast_mode_header: bool,
+    include_oauth_header: bool,
 ) -> Option<String> {
     let mut headers: Vec<String> = Vec::new();
 
@@ -498,6 +501,10 @@ fn build_beta_header(
                 .filter_map(serde_json::Value::as_str)
                 .map(String::from),
         );
+    }
+
+    if include_oauth_header && !headers.iter().any(|h| h == OAUTH_BETA_HEADER) {
+        headers.push(OAUTH_BETA_HEADER.to_string());
     }
 
     if include_cache_header && !headers.iter().any(|h| h == CACHE_BETA_HEADER) {
@@ -848,13 +855,13 @@ reasoning = true
 
     #[test]
     fn beta_header_includes_cache_header() {
-        let result = build_beta_header(None, true, false);
+        let result = build_beta_header(None, true, false, false);
         assert_eq!(result, Some(CACHE_BETA_HEADER.to_string()));
     }
 
     #[test]
     fn beta_header_no_cache_no_user_headers() {
-        let result = build_beta_header(None, false, false);
+        let result = build_beta_header(None, false, false, false);
         assert_eq!(result, None);
     }
 
@@ -865,7 +872,7 @@ reasoning = true
                 "beta_headers": ["interleaved-thinking-2025-05-14"]
             }
         });
-        let result = build_beta_header(Some(&opts), true, false);
+        let result = build_beta_header(Some(&opts), true, false, false);
         assert_eq!(
             result,
             Some(format!(
@@ -881,7 +888,7 @@ reasoning = true
                 "beta_headers": [CACHE_BETA_HEADER]
             }
         });
-        let result = build_beta_header(Some(&opts), true, false);
+        let result = build_beta_header(Some(&opts), true, false, false);
         // Should not duplicate the header
         assert_eq!(result, Some(CACHE_BETA_HEADER.to_string()));
     }
@@ -893,7 +900,7 @@ reasoning = true
                 "beta_headers": ["interleaved-thinking-2025-05-14"]
             }
         });
-        let result = build_beta_header(Some(&opts), false, false);
+        let result = build_beta_header(Some(&opts), false, false, false);
         assert_eq!(result, Some("interleaved-thinking-2025-05-14".to_string()));
     }
 
@@ -907,7 +914,7 @@ reasoning = true
         ];
 
         // No user headers — only cache header should appear
-        let header = build_beta_header(None, true, false).unwrap_or_default();
+        let header = build_beta_header(None, true, false, false).unwrap_or_default();
         for dep in &deprecated {
             assert!(
                 !header.contains(dep),
@@ -921,7 +928,7 @@ reasoning = true
                 "beta_headers": ["interleaved-thinking-2025-05-14"]
             }
         });
-        let header = build_beta_header(Some(&opts), true, false).unwrap_or_default();
+        let header = build_beta_header(Some(&opts), true, false, false).unwrap_or_default();
         for dep in &deprecated {
             assert!(
                 !header.contains(dep),
@@ -932,7 +939,7 @@ reasoning = true
 
     #[test]
     fn beta_header_includes_both_cache_and_fast_mode() {
-        let result = build_beta_header(None, true, true);
+        let result = build_beta_header(None, true, true, false);
         let header = result.expect("should produce a header");
         assert!(
             header.contains(CACHE_BETA_HEADER),
@@ -942,6 +949,18 @@ reasoning = true
             header.contains(FAST_MODE_BETA_HEADER),
             "should contain fast-mode header"
         );
+    }
+
+    #[test]
+    fn beta_header_includes_oauth_when_requested() {
+        let header = build_beta_header(None, false, false, true)
+            .expect("oauth alone should produce a header");
+        assert_eq!(header, OAUTH_BETA_HEADER);
+    }
+
+    #[test]
+    fn beta_header_omits_oauth_by_default() {
+        assert_eq!(build_beta_header(None, false, false, false), None);
     }
 
     // --- effort → thinking budget --------------------------------------------

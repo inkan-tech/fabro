@@ -12,10 +12,19 @@ use crate::skills::Skill;
 use crate::todo_runtime::TodoRuntime;
 use crate::todo_tools::make_update_plan_tool;
 use crate::tool_registry::ToolRegistry;
-use crate::tools::{WebFetchSummarizer, register_core_tools};
+use crate::tools::{WebFetchSummarizer, make_edit_file_tool, register_core_tools};
 
 pub struct OpenAiProfile {
-    base: BaseProfile,
+    base:         BaseProfile,
+    custom_tools: bool,
+}
+
+/// Whether a provider's API accepts freeform (`type: "custom"`) tools such as
+/// `apply_patch`. Perplexity's Agent API is OpenAI Responses-compatible but
+/// rejects them, so those providers fall back to the function-based
+/// `edit_file`/`write_file` tools.
+fn provider_supports_custom_tools(provider_id: &ProviderId) -> bool {
+    provider_id.as_str() != "perplexity-agent"
 }
 
 impl OpenAiProfile {
@@ -39,19 +48,36 @@ impl OpenAiProfile {
         registry.register(make_update_plan_tool(todo_runtime));
 
         Self {
-            base: BaseProfile {
+            base:         BaseProfile {
                 profile_kind: AgentProfileKind::OpenAi,
                 provider_id: ProviderId::openai(),
                 model: model.into(),
                 catalog: None,
                 registry,
             },
+            custom_tools: true,
         }
     }
 
     /// Override the provider ID while retaining the adapter/profile behavior.
     #[must_use]
     pub fn with_provider_id(mut self, provider_id: ProviderId) -> Self {
+        // Providers whose API rejects freeform `type: "custom"` tools (e.g.
+        // Perplexity's Agent API) drop apply_patch and rely on the
+        // function-based edit_file/write_file tools registered above.
+        self.custom_tools = provider_supports_custom_tools(&provider_id);
+        if !self.custom_tools {
+            self.base.registry.unregister("apply_patch");
+            // The OpenAI profile normally edits via the freeform apply_patch;
+            // without it, add the function-based edit_file for surgical edits
+            // (write_file alone would force whole-file rewrites).
+            self.base.registry.register(make_edit_file_tool());
+            // Perplexity's Agent API also rejects custom functions named
+            // `web_search` / `web_fetch` (reserved for its native web tooling),
+            // so drop them — they are non-essential for coding tasks.
+            self.base.registry.unregister("web_search");
+            self.base.registry.unregister("web_fetch");
+        }
         self.base.provider_id = provider_id;
         self
     }
@@ -108,6 +134,11 @@ impl AgentProfile for OpenAiProfile {
         skills: &[Skill],
     ) -> String {
         let provider_name = self.provider_display_name();
+        let edit_tools_section = if self.custom_tools {
+            "## apply_patch\nUse the `apply_patch` tool for all file modifications. This is a freeform tool: pass the raw patch text directly, never wrap it in JSON. The format uses `*** Begin Patch` / `*** End Patch` delimiters with `*** Add File:`, `*** Delete File:`, `*** Update File:` operations. Use `-` for removals, `+` for additions, and space-prefix for unchanged context lines. Show 3 lines of context around each change. NEVER use `applypatch` or `apply-patch`, only `apply_patch`.\n\nExample:\n```\n*** Begin Patch\n*** Update File: src/main.py\n@@ def hello():\n-    print(\"old\")\n+    print(\"new\")\n*** End Patch\n```\n\n## write_file\nUse for creating new files. For modifications, prefer apply_patch."
+        } else {
+            "## edit_file\nUse the `edit_file` tool to modify existing files: provide the file path, the exact `old_string` to find (with enough surrounding context to be unique), and the `new_string` to replace it with. Read the file first to get exact text. This provider does not support the freeform apply_patch tool.\n\n## write_file\nUse `write_file` to create new files or to fully rewrite a file's contents."
+        };
         let core_prompt = format!("\
 You are a coding agent powered by {provider_name}, running in a terminal-based agentic coding assistant. \
 You are expected to be precise, safe, and helpful.
@@ -146,8 +177,7 @@ If completing the task requires writing or modifying files:
 and focused on the task.
 - Use `git log` and `git blame` to search the history of the codebase if additional context is needed.
 - NEVER add copyright or license headers unless specifically requested.
-- When apply_patch fails, use the error text to construct a corrected patch. Re-read the target \
-file if you need fresh context.
+- When an edit fails, re-read the target file to get fresh context before constructing a corrected change.
 - Do not `git commit` your changes or create new git branches unless explicitly requested.
 
 # Validating Your Work
@@ -163,26 +193,7 @@ Use the provided tools to interact with the codebase and environment.
 ## read_file
 Read files to understand code before modifying. Use offset/limit for large files.
 
-## apply_patch
-Use the `apply_patch` tool for all file modifications. This is a freeform tool: pass the raw \
-patch text directly, never wrap it in JSON. The format uses `*** Begin Patch` / \
-`*** End Patch` delimiters with `*** Add File:`, `*** Delete File:`, `*** Update File:` \
-operations. Use `-` for removals, `+` for additions, and space-prefix for unchanged context \
-lines. Show 3 lines of context around each change. NEVER use `applypatch` or `apply-patch`, \
-only `apply_patch`.
-
-Example:
-```
-*** Begin Patch
-*** Update File: src/main.py
-@@ def hello():
--    print(\"old\")
-+    print(\"new\")
-*** End Patch
-```
-
-## write_file
-Use for creating new files. For modifications, prefer apply_patch.
+{edit_tools_section}
 
 ## shell
 Execute shell commands. Default timeout is 10 seconds. Use timeout_ms parameter for \
@@ -328,6 +339,36 @@ mod tests {
 
         let apply_patch = profile.tool_registry().get("apply_patch").unwrap();
         assert!(apply_patch.definition.is_custom());
+    }
+
+    #[test]
+    fn perplexity_agent_drops_custom_apply_patch_for_function_edit_tools() {
+        // Perplexity's Agent API rejects freeform `type: "custom"` tools; the
+        // profile must fall back to the function-based edit_file/write_file.
+        let profile = OpenAiProfile::new("pplx/claude-opus-4-8")
+            .with_provider_id(ProviderId::new("perplexity-agent"));
+        let names = profile.tool_registry().names();
+        assert!(
+            !names.contains(&"apply_patch".to_string()),
+            "apply_patch (custom) must be dropped for perplexity-agent"
+        );
+        assert!(names.contains(&"edit_file".to_string()));
+        assert!(names.contains(&"write_file".to_string()));
+        // Perplexity reserves these tool names; they must be dropped too.
+        assert!(!names.contains(&"web_search".to_string()));
+        assert!(!names.contains(&"web_fetch".to_string()));
+    }
+
+    #[test]
+    fn openai_keeps_apply_patch_for_openai_compatible_providers() {
+        // Non-perplexity providers on the openai adapter keep the custom tool.
+        let profile = OpenAiProfile::new("kimi-k2.5").with_provider_id(ProviderId::new("kimi"));
+        assert!(
+            profile
+                .tool_registry()
+                .names()
+                .contains(&"apply_patch".to_string())
+        );
     }
 
     #[test]

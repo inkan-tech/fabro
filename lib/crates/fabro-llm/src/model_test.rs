@@ -142,7 +142,12 @@ fn build_deep_test_params(info: &Model, client: Arc<Client>) -> Option<GenerateP
         .max_tool_rounds(5)
         .max_tokens(1024);
 
-    if info.features.reasoning {
+    // Only request a reasoning-effort level for models whose endpoint actually
+    // accepts one (`Levels`/`AlwaysAdaptive`). Some models reason internally but
+    // reject an explicit effort param (e.g. Perplexity's proxied models advertise
+    // `features.reasoning` yet only allow `reasoning_effort = none`); sending High
+    // there fails config validation before the tool-use probe can run.
+    if info.supports_reasoning_effort() {
         params = params.reasoning_effort(ReasoningEffort::High);
     }
 

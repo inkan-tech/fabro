@@ -1,0 +1,11 @@
+digraph AcpClaude {
+    graph [goal="Check that Claude Code runs through the ACP backend in a rootless Podman sandbox"]
+    rankdir=LR
+
+    start [shape=Mdiamond, label="Start"]
+    exit  [shape=Msquare, label="Exit"]
+
+    hello [label="Hello", backend="acp", acp.command="claude-agent-acp", prompt="Create a file hello.txt with the text 'acp ok', then stop."]
+
+    start -> hello -> exit
+}

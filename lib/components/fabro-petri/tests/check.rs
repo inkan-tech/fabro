@@ -47,6 +47,14 @@ const UNKNOWN_MODEL_WORKFLOW: &str = r#"digraph Bad {
     start -> work -> exit
 }"#;
 
+const ACP_WORKFLOW: &str = r#"digraph Acp {
+    graph [goal="Run an ACP agent"]
+    start [shape=Mdiamond]
+    exit [shape=Msquare]
+    work [shape=box, backend="acp", acp.command="claude-agent-acp", prompt="Do the work"]
+    start -> work -> exit
+}"#;
+
 const SETTINGS: &str = "_version = 1\n\n[workflow]\ngraph = \"workflow.fabro\"\n";
 
 /// The `.fabro/workflows/hello` bundle checked into this repository.
@@ -539,4 +547,22 @@ fn invalid_settings_are_rejected_by_the_embedded_frontend_in_every_layer() {
             }
         }
     }
+}
+
+#[tokio::test]
+async fn an_acp_agent_node_does_not_need_a_model() {
+    let acp = request(
+        bundle(&[("workflow.fabro", ACP_WORKFLOW), ("workflow.toml", SETTINGS)]),
+        runtime_with_openai(),
+    );
+    let admitted = check::check(&acp).expect("the ACP workflow is admitted");
+    assert!(!admitted.needs_model());
+
+    let api = UNKNOWN_ATTRIBUTE_WORKFLOW.replace(", bogus=\"yes\"", "");
+    let api = request(
+        bundle(&[("workflow.fabro", &api), ("workflow.toml", SETTINGS)]),
+        runtime_with_openai(),
+    );
+    let admitted = check::check(&api).expect("the API workflow is admitted");
+    assert!(admitted.needs_model());
 }

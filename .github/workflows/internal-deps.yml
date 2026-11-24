@@ -29,7 +29,7 @@ env:
 jobs:
   check:
     name: Test (Linux)
-    runs-on: inkan-runner-amd64
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
       contents: read

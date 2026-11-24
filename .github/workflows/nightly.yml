@@ -14,7 +14,7 @@ permissions: {}
 jobs:
   tag-nightly:
     name: Tag nightly
-    runs-on: ubuntu-24.04-x86-32-cores
+    runs-on: ubuntu-24.04
     environment: nightly
     permissions:
       contents: read

@@ -79,10 +79,10 @@ jobs:
           done
           cargo update "${args[@]}" 2>&1 | tee "$RUNNER_TEMP/cargo-update.log"
 
-          # Updating Petri or Pebble re-resolves the `branch = "main"` copy of
-          # sandbox-driver to its main. Put every package back on the pin.
-          # Petri may now also declare the pin by `rev`, so the lock can hold
-          # two sources at the same commit: the check below accepts that.
+          # Petri and Pebble declare sandbox-driver by `rev`, like Cargo.toml,
+          # so nothing should move. If a `branch = "main"` copy comes back and
+          # re-resolves to sandbox-driver main, put it back on the pin. The
+          # Test step fails on two copies (E0053), whatever this loop does.
           python3 - "$SANDBOX_DRIVER_PIN" <<'PY' | while read -r spec; do
           import sys
           import tomllib

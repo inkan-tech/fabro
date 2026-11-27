@@ -1,0 +1,59 @@
+digraph NdaactGoal {
+    graph [
+        goal="Complete the user-provided ndaact task",
+        rankdir=LR,
+        max_node_visits=30
+    ]
+
+    start [shape=Mdiamond, label="Start"]
+    exit  [shape=Msquare, label="Exit"]
+
+    work [
+        label="Work",
+        backend="acp",
+        acp.command="claude-agent-acp",
+        thread_id="goal",
+        fidelity="full",
+        max_visits=12,
+        prompt="@prompts/continue.md"
+    ]
+
+    audit [
+        label="Completion Audit",
+        backend="acp",
+        acp.command="claude-agent-acp",
+        thread_id="goal",
+        fidelity="full",
+        goal_gate=true,
+        retry_target="work",
+        output_schema="routing",
+        output_retries=2,
+        max_visits=12,
+        prompt="@prompts/audit.md"
+    ]
+
+    verify [
+        label="Verify",
+        shape=parallelogram,
+        script="scripts/check-rust.sh --full 2>&1 && cd apps/extension-chrome && bun install 2>&1 && bun test test/ 2>&1",
+        goal_gate=true,
+        retry_target="fixup"
+    ]
+
+    fixup [
+        label="Fixup",
+        backend="acp",
+        acp.command="claude-agent-acp",
+        prompt="The verify step failed. Read the build output from context and fix all Rust format, clippy, build, test and JS test failures.",
+        max_visits=3
+    ]
+
+    start -> work -> audit
+
+    audit -> verify [label="Done", condition="outcome=succeeded"]
+    audit -> work [label="Continue", condition="outcome=failed || preferred_label=Continue"]
+    audit -> work [label="No clear verdict"]
+    verify -> exit [condition="outcome=succeeded"]
+    verify -> fixup
+    fixup -> verify
+}

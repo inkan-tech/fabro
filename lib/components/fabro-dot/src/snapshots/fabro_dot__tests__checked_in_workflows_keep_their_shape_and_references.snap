@@ -2,6 +2,9 @@
 source: lib/components/fabro-dot/src/tests.rs
 expression: report
 ---
+.fabro/workflows/acp-claude/workflow.fabro: AcpClaude nodes=3 edges=2
+  goal-inline
+  inline@hello
 .fabro/workflows/card-game/workflow.fabro: CardGame nodes=20 edges=31
   goal-inline
   inline@expand_spec
@@ -55,6 +58,14 @@ expression: report
 .fabro/workflows/interview/workflow.fabro: Interview nodes=8 edges=15
   goal-inline
   inline@summarize
+.fabro/workflows/ndaact-goal/workflow.fabro: NdaactGoal nodes=6 edges=8
+  goal-inline
+  file:prompt:prompts/continue.md@work
+  file:prompt:prompts/audit.md@audit
+  inline@fixup
+.fabro/workflows/ndaact-smoke/workflow.fabro: NdaactSmoke nodes=3 edges=2
+  goal-inline
+  inline@hello
 .fabro/workflows/patch-cves/workflow.fabro: PatchCves nodes=3 edges=2
   goal-inline
   stylesheet-inline

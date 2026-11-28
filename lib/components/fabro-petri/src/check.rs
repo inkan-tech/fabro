@@ -161,8 +161,7 @@ impl Admitted {
             .any(|node| {
                 node.step.kind == PROMPT_KIND
                     || (node.step.kind == AGENT_KIND
-                        && node.step.config.get("backend").and_then(|v| v.as_str())
-                            != Some("acp"))
+                        && node.step.config.get("backend").and_then(|v| v.as_str()) != Some("acp"))
             })
     }
 }

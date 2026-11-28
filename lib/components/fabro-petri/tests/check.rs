@@ -552,7 +552,10 @@ fn invalid_settings_are_rejected_by_the_embedded_frontend_in_every_layer() {
 #[tokio::test]
 async fn an_acp_agent_node_does_not_need_a_model() {
     let acp = request(
-        bundle(&[("workflow.fabro", ACP_WORKFLOW), ("workflow.toml", SETTINGS)]),
+        bundle(&[
+            ("workflow.fabro", ACP_WORKFLOW),
+            ("workflow.toml", SETTINGS),
+        ]),
         runtime_with_openai(),
     );
     let admitted = check::check(&acp).expect("the ACP workflow is admitted");

@@ -150,13 +150,19 @@ pub struct Admitted {
 
 impl Admitted {
     /// Whether any admitted graph has a node that runs a model: an agent
-    /// or a prompt node. A workflow of commands and gates needs none.
+    /// or a prompt node. A workflow of commands and gates needs none. An
+    /// agent node with `backend="acp"` owns its own model and credentials,
+    /// so it does not count.
     #[must_use]
     pub fn needs_model(&self) -> bool {
         std::iter::once(&self.graph)
             .chain(&self.children)
             .flat_map(|graph| &graph.body.nodes)
-            .any(|node| node.step.kind == AGENT_KIND || node.step.kind == PROMPT_KIND)
+            .any(|node| {
+                node.step.kind == PROMPT_KIND
+                    || (node.step.kind == AGENT_KIND
+                        && node.step.config.get("backend").and_then(|v| v.as_str()) != Some("acp"))
+            })
     }
 }
 

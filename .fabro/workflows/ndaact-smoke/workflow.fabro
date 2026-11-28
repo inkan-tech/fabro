@@ -1,0 +1,12 @@
+digraph NdaactSmoke {
+    graph [goal="Check the ndaact image and the ACP Claude backend in the ndaact environment"]
+    rankdir=LR
+
+    start [shape=Mdiamond, label="Start"]
+    exit  [shape=Msquare, label="Exit"]
+
+    hello [label="Tools", backend="acp", acp.command="claude-agent-acp", max_visits=1,
+           prompt="Run cargo --version, bun --version and gh --version. Write the three outputs to versions.txt, then stop. Change nothing else."]
+
+    start -> hello -> exit
+}
